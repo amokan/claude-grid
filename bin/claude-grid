@@ -362,6 +362,41 @@ EOF
 
 GRID=""
 MODEL=""
+# Flags after `--`, passed to claude in every pane this run starts.
+CLAUDE_ARGS=()
+
+# Prints why a Claude flag can't be used in a grid and fails, or succeeds silently.
+check_claude_arg() {
+  case "$1" in
+    --bare | --safe-mode)
+      echo "$1 turns off hooks, so the panes would never show NEEDS INPUT" ;;
+    --settings | --settings=*)
+      echo "a second --settings replaces claude-grid's hooks; put those settings in ~/.claude/settings.json or the project's .claude/settings.json instead" ;;
+    -p | --print)
+      echo "$1 answers once and exits; grid panes are interactive sessions" ;;
+    --tmux | --tmux=*)
+      echo "$1 opens its own tmux session outside the grid" ;;
+    --bg | --background | --cloud | --cloud=* | --desktop | --teleport | --teleport=*)
+      echo "$1 runs the session somewhere other than the pane" ;;
+    -h | --help | -v | --version)
+      echo "$1 prints and exits; run claude $1 directly" ;;
+    *) return 0 ;;
+  esac
+  return 1
+}
+
+# The launcher command for a folder, if a launcher rule matches it.
+launcher_for() {
+  local rule
+  for rule in ${LAUNCHERS[@]+"${LAUNCHERS[@]}"}; do
+    # shellcheck disable=SC2053 # the folder part is a glob on purpose
+    if [[ "$1" == ${rule%%|*} ]]; then
+      echo "${rule#*|}"
+      return 0
+    fi
+  done
+  return 1
+}
 
 valid_grid_name() { local re='^[A-Za-z0-9_-]+$'; [[ "$1" =~ $re ]]; }
 
@@ -417,17 +452,24 @@ check_tmux() {
 }
 
 claude_cmd() {
-  local dir="$1" rule flags launch
+  local dir="$1" arg flags extra launch launcher
+  # The flags for claude, quoted for the pane's shell ...
   flags="--settings $(printf '%q' "$STATE_DIR/claude-hooks.json")"
-  [ -z "$MODEL" ] || flags="$flags --model $(printf '%q' "$MODEL")"
-  launch="$CLAUDE_COMMAND $flags"
-  for rule in ${LAUNCHERS[@]+"${LAUNCHERS[@]}"}; do
-    # shellcheck disable=SC2053 # the folder part is a glob on purpose
-    if [[ "$dir" == ${rule%%|*} ]]; then
-      launch="CLAUDE_EXTRA_ARGS=$(printf '%q' "$flags") ${rule#*|}"
-      break
-    fi
+  # ... and the same flags for a launcher, which splits $CLAUDE_EXTRA_ARGS on spaces and
+  # doesn't undo shell quoting.
+  extra="--settings $STATE_DIR/claude-hooks.json"
+  if [ -n "$MODEL" ]; then
+    flags="$flags --model $(printf '%q' "$MODEL")"
+    extra="$extra --model $MODEL"
+  fi
+  for arg in ${CLAUDE_ARGS[@]+"${CLAUDE_ARGS[@]}"}; do
+    flags="$flags $(printf '%q' "$arg")"
+    extra="$extra $arg"
   done
+  launch="$CLAUDE_COMMAND $flags"
+  if launcher="$(launcher_for "$dir")"; then
+    launch="CLAUDE_EXTRA_ARGS=$(printf '%q' "$extra") $launcher"
+  fi
   # shellcheck disable=SC2016 # $? and $s are for the pane's shell, not this one
   printf '%s || { s=$?; printf "\\n\\033[1mclaude-grid: claude launch exited with status %%s. Press Enter for a shell.\\033[0m " "$s"; read -r _; }; exec %q -l' \
     "$launch" "${SHELL:-/bin/sh}"
@@ -495,6 +537,7 @@ ${b}Start${r}
   claude-grid -n N            N panes in the current directory
     --model NAME              start the new panes with this model (opus, sonnet, haiku or a model id)
     --grid NAME               use the grid named NAME (started if needed), even if attached elsewhere
+    -- FLAGS...               pass the rest to claude in each new pane, e.g. -- --worktree --effort high
 
 ${b}Manage${r}
   claude-grid attach [NAME]   attach to a running grid
@@ -913,6 +956,13 @@ while [ $# -gt 0 ]; do
       [[ "${2:-}" =~ $re ]] || die "-n needs a positive number"
       for _ in $(seq "$2"); do dirs+=("$PWD"); done
       shift 2 ;;
+    --)
+      shift
+      for arg in "$@"; do
+        msg="$(check_claude_arg "$arg")" || die "can't pass $arg to claude in a grid: $msg"
+      done
+      CLAUDE_ARGS=("$@")
+      break ;;
     -*)
       die "unknown option: $1 (see claude-grid -h)" ;;
     *)
@@ -932,15 +982,47 @@ done
 [ -n "$GRID" ] || GRID="$(pick_grid)"
 valid_grid_name "$GRID" || die "grid names use letters, digits, - and _ (got $GRID)"
 
-write_generated
-
 fresh=false
-if grid_running "$GRID"; then
-  t source-file "$STATE_DIR/grid.conf"
-else
+if ! grid_running "$GRID"; then
   fresh=true
   [ ${#dirs[@]} -gt 0 ] || dirs=("$PWD")
 fi
+
+# Launchers get the flags split on spaces, so a value with a space would arrive in pieces.
+for dir in ${dirs[@]+"${dirs[@]}"}; do
+  launcher_for "$(cd "$dir" && pwd)" >/dev/null || continue
+  for arg in ${MODEL:+"$MODEL"} ${CLAUDE_ARGS[@]+"${CLAUDE_ARGS[@]}"}; do
+    [[ "$arg" != *[[:space:]]* ]] ||
+      die "$dir starts through a launcher, which can't receive \"$arg\": \$CLAUDE_EXTRA_ARGS splits on spaces"
+  done
+done
+
+# Claude's --worktree, read the way claude reads it: an optional name, unless the next word is a flag.
+worktree=false
+worktree_name=""
+for ((i = 0; i < ${#CLAUDE_ARGS[@]}; i++)); do
+  case "${CLAUDE_ARGS[$i]}" in
+    --worktree=*)
+      worktree=true
+      worktree_name="${CLAUDE_ARGS[$i]#--worktree=}" ;;
+    --worktree | -w)
+      worktree=true
+      next="${CLAUDE_ARGS[$((i + 1))]:-}"
+      case "$next" in '' | -*) ;; *) worktree_name="$next" ;; esac ;;
+  esac
+done
+if $worktree; then
+  if [ -n "$worktree_name" ] && [ ${#dirs[@]} -gt 1 ]; then
+    die "--worktree $worktree_name would put all ${#dirs[@]} new panes in the same worktree; leave out the name so each pane gets its own"
+  fi
+  for dir in ${dirs[@]+"${dirs[@]}"}; do
+    git -C "$dir" rev-parse --is-inside-work-tree >/dev/null 2>&1 ||
+      die "--worktree needs a git repository, and $dir isn't one"
+  done
+fi
+
+write_generated
+$fresh || t source-file "$STATE_DIR/grid.conf"
 
 for dir in ${dirs[@]+"${dirs[@]}"}; do
   add_pane "$dir"

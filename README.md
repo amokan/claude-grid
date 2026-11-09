@@ -17,7 +17,7 @@ behind it.
 
 ## It doesn't change your terminal setup
 
-claude-grid uses tmux to draw the grid, but you don't have to use tmux, know tmux, or change
+claude-grid uses [tmux](https://tmux.github.io) to draw the grid, but you don't have to use tmux, know tmux, or change
 anything about how you work today if you're an existing tmux user.
 
 - **tmux runs only while a grid is open.** Close the grid and no tmux is left running.
@@ -84,6 +84,37 @@ claude-grid ~/api --model opus    # start the new panes on a specific model
 ```
 
 Running `claude-grid DIR` while a grid is open adds panes to it.
+
+### Passing flags to Claude
+
+Everything after `--` goes to `claude` in each pane that run starts:
+
+```sh
+claude-grid ~/api:3 -- --worktree               # three Claudes, each in its own git worktree
+claude-grid ~/web -- --permission-mode plan --effort high
+claude-grid ~/api -- --continue                 # pick up the last conversation in ~/api
+```
+
+`--worktree` is worth knowing about: without it, several panes in one folder edit the same
+checkout. Leave out the worktree name when a run starts several panes, so Claude gives each
+pane its own worktree; with a name, they would all open the same one, so claude-grid refuses
+that. It also refuses `--worktree` for a folder that isn't a git repository. New worktrees
+branch from the remote's default branch, not your current branch, unless you set Claude Code's
+[`worktree.baseRef`](https://code.claude.com/docs/en/worktrees#choose-the-base-branch) to
+`"head"`.
+
+For flags you want in every pane, every time, set `CLAUDE_COMMAND` instead (see
+[Settings](#settings)).
+
+claude-grid refuses the flags that would break a grid:
+
+| Flag | Why |
+|---|---|
+| `--bare`, `--safe-mode` | they turn off hooks, so the pane never shows NEEDS INPUT |
+| `--settings` | a second `--settings` replaces claude-grid's hooks; put those settings in `~/.claude/settings.json` or the project's `.claude/settings.json` |
+| `-p`, `--print` | they answer once and exit |
+| `--tmux`, `--bg`, `--cloud`, `--desktop`, `--teleport` | the session runs somewhere other than the pane |
+| `-h`, `--help`, `-v`, `--version` | they print and exit |
 
 | Command | |
 |---|---|
@@ -198,8 +229,8 @@ The part before `|` is a glob, matched against the pane folder's full path:
 
 The command runs in the pane's folder. claude-grid passes the flags it would have given
 `claude` in `$CLAUDE_EXTRA_ARGS`: the `--settings` file with the hooks that report the pane's
-state, and `--model` if you started the pane with one. The launcher has to hand them on to
-`claude`, **unquoted**, so they split into separate arguments:
+state, `--model` if you gave one, and any [flags after `--`](#passing-flags-to-claude). The
+launcher has to hand them on to `claude`, **unquoted**, so they split into separate arguments:
 
 ```sh
 #!/bin/sh
@@ -209,7 +240,13 @@ exec claude ${CLAUDE_EXTRA_ARGS:-}
 ```
 
 with `launcher=*/my_project|./bin/claude`. A launcher that drops `$CLAUDE_EXTRA_ARGS` still
-starts Claude, but that pane never shows NEEDS INPUT, and `--model` doesn't reach it.
+starts Claude, but that pane never shows NEEDS INPUT, and `--model` and the flags after `--`
+don't reach it.
+
+Because the launcher splits the flags on spaces, a flag value that contains a space (such as
+`-- --append-system-prompt "be terse"`) can't reach a launcher pane. claude-grid refuses it
+for those folders instead of passing it in pieces. Values with `*` or `?` can be expanded as
+file names by the launcher's shell, the same as any unquoted variable.
 
 ### tmux overrides
 

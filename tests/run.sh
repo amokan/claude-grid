@@ -78,9 +78,10 @@ wait_for() {
 strip() { perl -pe 's/\e\[[0-9;]*[A-Za-z]//g; s/\r//g'; }
 
 mkdir -p "$WORK/bin" "$WORK/proj/a" "$WORK/proj/b" "$WORK/proj/launched" "$(dirname "$CONFIG")"
+# Records each argument in brackets, so "a b" and "a" "b" look different.
 cat >"$WORK/bin/claude" <<'EOF'
 #!/bin/sh
-echo "$@" >"$CG_TEST_DIR/args.$$"
+printf '[%s]' "$@" >"$CG_TEST_DIR/args.$$"
 exec sleep 600
 EOF
 cat >"$WORK/bin/launcher" <<'EOF'
@@ -109,7 +110,7 @@ check "grid main is running" tg main has-session -t claude
 expect "three panes in two folders" '^3$' sh -c "tmux -L claude-grid-main list-panes -s -t claude | wc -l | tr -d ' '"
 expect "panes are named after their folders" 'a b b' sh -c "tmux -L claude-grid-main list-panes -s -t claude -F '#{@claude_name}' | tr '\n' ' '"
 wait_for sh -c "ls '$WORK'/args.* >/dev/null 2>&1"
-expect "each Claude gets the generated hooks file" "--settings $STATE/claude-hooks.json" sh -c "cat '$WORK'/args.*"
+expect "each Claude gets the generated hooks file" "\\[--settings\\]\\[$STATE/claude-hooks.json\\]" sh -c "cat '$WORK'/args.*"
 if command -v jq >/dev/null; then
   # jq may be a version-manager shim that needs the real XDG folders.
   check "the hooks file is valid JSON" env -u XDG_CONFIG_HOME -u XDG_STATE_HOME jq -e '.hooks.PreToolUse[0].hooks[0].command | test("state.sh. tool$")' "$STATE/claude-hooks.json"
@@ -170,11 +171,49 @@ tg main run-shell -t "$pane" "#{q:@cg_bin} --grid #{q:@cg_grid} #{q:pane_current
 expect "c adds a pane to the same grid" '^4$' sh -c "tmux -L claude-grid-main list-panes -s -t claude | wc -l | tr -d ' '"
 check "r reloads the grid config" tg main source-file -F "#{@cg_state}/grid.conf"
 
+section "Claude flags after --"
+rm -f "$WORK"/args.*
+(cd "$WORK/proj" && cg --grid flags a --model opus -- --effort high --add-dir "/x y" --allowedTools 'Bash(git:*)' >/dev/null 2>&1)
+wait_for sh -c "ls '$WORK'/args.* >/dev/null 2>&1"
+expect "flags after -- reach claude intact, after the hooks and --model" \
+  "\\[--model\\]\\[opus\\]\\[--effort\\]\\[high\\]\\[--add-dir\\]\\[/x y\\]\\[--allowedTools\\]\\[Bash\\(git:\\*\\)\\]$" sh -c "cat '$WORK'/args.*"
+tg flags kill-server
+for flag in --bare --safe-mode --settings=x.json -p --tmux --bg --cloud --desktop --teleport --help; do
+  expect "refuses $flag" "can't pass $flag to claude in a grid" cg --grid refused "$WORK/proj/a" -- "$flag"
+done
+expect "explains why --settings is refused" "replaces claude-grid's hooks" cg --grid refused "$WORK/proj/a" -- --settings x.json
+check "a refused flag starts no grid" sh -c "! tmux -L claude-grid-refused has-session 2>/dev/null"
+
+section "--worktree"
+for form in "--worktree feat" "-w feat" "--worktree=feat"; do
+  # shellcheck disable=SC2086 # split the form into its words on purpose
+  expect "refuses a named worktree for several panes: $form" 'would put all 2 new panes in the same worktree' \
+    cg --grid wt "$WORK/proj/a:2" -- $form
+done
+expect "-w followed by a flag has no name, and needs a git repository" "needs a git repository, and $WORK/proj/a isn't one" \
+  cg --grid wt "$WORK/proj/a:2" -- -w --effort high
+check "a refused worktree run starts no grid" sh -c "! tmux -L claude-grid-wt has-session 2>/dev/null"
+git init -q "$WORK/repo"
+rm -f "$WORK"/args.*
+(cd "$WORK" && cg --grid wt repo:2 -- --worktree >/dev/null 2>&1)
+check "an unnamed worktree starts every pane in a git repository" tg wt has-session -t claude
+wait_for sh -c "[ \$(ls '$WORK'/args.* 2>/dev/null | wc -l) -eq 2 ]"
+expect "each pane gets --worktree" '^2$' sh -c "grep -l '\\[--worktree\\]$' '$WORK'/args.* | wc -l | tr -d ' '"
+(cd "$WORK" && cg --grid wt repo -- -w solo >/dev/null 2>&1)
+expect "a named worktree is fine for one new pane" '^3$' sh -c "tmux -L claude-grid-wt list-panes -s -t claude | wc -l | tr -d ' '"
+tg wt kill-server
+
 section "Launchers"
 write_config "launcher=*/launched|$WORK/bin/launcher"
-(cd "$WORK/proj" && cg --model opus launched >/dev/null 2>&1)
+(cd "$WORK/proj" && cg --model opus launched -- --effort high 'Bash(git:*)' >/dev/null 2>&1)
 wait_for sh -c "ls '$WORK'/launcher.* >/dev/null 2>&1"
-expect "a matching folder starts through its launcher with the hook flags" "^--settings $STATE/claude-hooks.json --model opus$" sh -c "cat '$WORK'/launcher.*"
+expect "a matching folder starts through its launcher with every flag, unescaped" \
+  "^--settings $STATE/claude-hooks.json --model opus --effort high Bash\\(git:\\*\\)$" sh -c "cat '$WORK'/launcher.*"
+expect "a value with a space is refused for launcher panes" 'launcher, which can.t receive "be terse"' \
+  cg --grid spaced "$WORK/proj/launched" -- --append-system-prompt "be terse"
+check "and no grid starts" sh -c "! tmux -L claude-grid-spaced has-session 2>/dev/null"
+expect "the check covers the default folder of a new grid too" 'launcher, which can.t receive "be terse"' \
+  sh -c "cd '$WORK/proj/launched' && '$BASH_BIN' '$REPO/bin/claude-grid' --grid spaced -- --append-system-prompt 'be terse'"
 write_config
 
 section "Settings file"
