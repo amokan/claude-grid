@@ -10,5 +10,5 @@ if [ -z "$target" ]; then
   exit 0
 fi
 
-set -- $target
-tmux select-window -t "$2" \; select-pane -t "$1"
+read -r pane window <<<"$target"
+tmux select-window -t "$window" \; select-pane -t "$pane"

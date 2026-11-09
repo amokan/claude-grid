@@ -226,6 +226,20 @@ servers.
 - **A pane never shows NEEDS INPUT:** if that folder uses a launcher, make sure the launcher
   passes `$CLAUDE_EXTRA_ARGS` to `claude`, unquoted (see [Project launchers](#project-launchers)).
 
+## Contributing
+
+Pull requests are welcome. CI runs two checks, and you can run both locally from the checkout:
+
+```sh
+shellcheck -x bin/claude-grid install.sh libexec/claude-grid/*.sh tests/run.sh
+/bin/bash tests/run.sh        # needs tmux 3.8 or newer
+```
+
+`tests/run.sh` starts real grids against a fake `claude`, private tmux sockets and temporary
+settings folders, so it doesn't touch your own grids or settings. CI runs it on macOS with both
+the bash 3.2 that macOS ships and a current bash, so keep scripts working in bash 3.2: no
+associative arrays, `mapfile`, or `${var,,}`.
+
 ## License
 
 [MIT](LICENSE)

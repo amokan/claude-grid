@@ -1,3 +1,4 @@
+# shellcheck shell=bash
 # Terminal styling shared by claude-grid and install.sh (sourced, not run).
 # Output is plain text when stdout isn't a terminal, TERM is dumb, or NO_COLOR is set.
 
