@@ -1,12 +1,23 @@
+# OS
 .DS_Store
+._*
 
-# Editor / IDE metadata
+# Editors
 .vscode/
 .idea/
 .cursor/
-*.swp
+*.sw[op]
+*~
 
-# Local Claude Code settings (user-specific)
-.claude/settings.local.json
+# Local tool state: ignore every top-level dot-directory except the ones this repo ships
+/.*/
+!/.github/
 
+# Local files that can hold personal paths or tokens
+.env
+.envrc
+.mcp.json
+CLAUDE.local.md
+
+# Ship CLAUDE.md even when a global gitignore excludes it
 !CLAUDE.md
