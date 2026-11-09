@@ -225,6 +225,19 @@ if command -v jq >/dev/null; then
   write_config
 fi
 tg mini kill-server
+write_config "MINIMAL_STATUS=true"
+rm -f "$WORK"/args.*
+(cd "$WORK/proj" && cg --grid mini a >/dev/null 2>&1)
+wait_for sh -c "ls '$WORK'/args.* >/dev/null 2>&1"
+expect "MINIMAL_STATUS=true gives every new pane the minimal statusLine" "\\[$STATE/claude-minimal-status.json\\]" sh -c "cat '$WORK'/args.*"
+rm -f "$WORK"/args.*
+(cd "$WORK/proj" && cg --grid mini a --no-minimal-status >/dev/null 2>&1)
+wait_for sh -c "ls '$WORK'/args.* >/dev/null 2>&1"
+expect "--no-minimal-status keeps your own statusLine for one run" "\\[$STATE/claude-hooks.json\\]" sh -c "cat '$WORK'/args.*"
+tg mini kill-server
+write_config "MINIMAL_STATUS=yes"
+expect "MINIMAL_STATUS must be true or false" 'MINIMAL_STATUS must be true or false' cg colors
+write_config
 statusline() { printf '%s' "$2" | env -i PATH="$1" "$BASH_BIN" "$REPO/libexec/claude-grid/statusline.sh" | strip; }
 session='{"workspace":{"project_dir":"/r/api","current_dir":"/tmp"},"model":{"display_name":"Opus 5.5"},"effort":{"level":"high"},"context_window":{"used_percentage":41.6},"cost":{"total_cost_usd":1.2345}}'
 in_worktree='{"workspace":{"project_dir":"/r/api","current_dir":"/tmp"},"worktree":{"name":"bright-fox","branch":"worktree-bright-fox"},"model":{"display_name":"Sonnet 5.5"}}'
@@ -273,7 +286,7 @@ write_config
 
 section "Settings menu"
 # Menu numbers follow SETTING_KEYS; LAUNCHERS comes after the last setting.
-on_tty '8\ngruvbox\n6\n40\n4\n500\n70\n1\nC-Spce\nC-a\n16\na\n*/proj\nmise run claude\n\ns\n' "$BASH_BIN" "$REPO/bin/claude-grid" config >"$WORK/menu.out" 2>&1
+on_tty '8\ngruvbox\n6\n40\n4\n500\n70\n1\nC-Spce\nC-a\n17\na\n*/proj\nmise run claude\n\ns\n' "$BASH_BIN" "$REPO/bin/claude-grid" config >"$WORK/menu.out" 2>&1
 menu="$(strip <"$WORK/menu.out")"
 expect "rejects an out-of-range value" 'FLOAT_WIDTH must be 1-100' printf '%s' "$menu"
 expect "rejects a key tmux doesn't know" "doesn't know the key C-Spce" printf '%s' "$menu"

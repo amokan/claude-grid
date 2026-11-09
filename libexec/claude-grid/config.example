@@ -38,7 +38,11 @@
 # What each pane runs; add flags here, e.g. claude --model opus
 #CLAUDE_COMMAND=claude
 
-# The statusLine for panes started with --minimal-status. Empty: claude-grid's one-liner
+# true: new panes get a one-line Claude statusLine instead of your own.
+# For one run: claude-grid --minimal-status, or --no-minimal-status
+#MINIMAL_STATUS=false
+
+# The statusLine for minimal-status panes. Empty: claude-grid's one-liner
 # (folder · branch · model effort · context % · cost). Any statusLine command works, e.g.
 # ~/.claude/statusline-compact.sh; it gets the same JSON on stdin as any Claude statusLine.
 #MINIMAL_STATUS_COMMAND=

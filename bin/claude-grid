@@ -37,7 +37,7 @@ readonly STATE_DIR="${XDG_STATE_HOME:-$HOME/.local/state}/claude-grid"
 # ---- Settings ---------------------------------------------------------------
 
 readonly COLOR_KEYS="COLOR_WAITING COLOR_ACTIVE COLOR_BORDER COLOR_TEXT COLOR_STATUS"
-readonly SETTING_KEYS="PREFIX START_FLOATING AUTO_FLOAT FLOAT_WIDTH FLOAT_HEIGHT FADE SWITCH_GRACE_MS THEME $COLOR_KEYS CLAUDE_COMMAND MINIMAL_STATUS_COMMAND"
+readonly SETTING_KEYS="PREFIX START_FLOATING AUTO_FLOAT FLOAT_WIDTH FLOAT_HEIGHT FADE SWITCH_GRACE_MS THEME $COLOR_KEYS CLAUDE_COMMAND MINIMAL_STATUS MINIMAL_STATUS_COMMAND"
 
 builtin_default() {
   case "$1" in
@@ -55,6 +55,7 @@ builtin_default() {
     COLOR_TEXT) echo "#d0d0d0" ;;
     COLOR_STATUS) echo "#262626" ;;
     CLAUDE_COMMAND) echo "claude" ;;
+    MINIMAL_STATUS) echo "false" ;;
     MINIMAL_STATUS_COMMAND) echo "" ;;
   esac
 }
@@ -83,7 +84,8 @@ describe() {
     COLOR_TEXT) echo "border and status text" ;;
     COLOR_STATUS) echo "status bar background" ;;
     CLAUDE_COMMAND) echo "what each pane runs; add flags here, e.g. claude --model opus" ;;
-    MINIMAL_STATUS_COMMAND) echo "statusLine command for panes started with --minimal-status (empty: claude-grid's one-liner)" ;;
+    MINIMAL_STATUS) echo "true: new panes get a one-line Claude statusLine (for one run: --minimal-status, --no-minimal-status)" ;;
+    MINIMAL_STATUS_COMMAND) echo "the statusLine command for minimal-status panes (empty: claude-grid's one-liner)" ;;
   esac
 }
 
@@ -99,7 +101,7 @@ validate_setting() {
   case "$key" in
     PREFIX)
       [ -n "$value" ] && [[ "$value" != *[[:space:]]* ]] || { echo "must be a tmux key name such as C-Space"; return 1; } ;;
-    START_FLOATING)
+    START_FLOATING | MINIMAL_STATUS)
       [ "$value" = true ] || [ "$value" = false ] || { echo "must be true or false"; return 1; } ;;
     AUTO_FLOAT)
       [ "$value" = on ] || [ "$value" = off ] || { echo "must be on or off"; return 1; } ;;
@@ -378,7 +380,6 @@ write_claude_settings() {
 
 GRID=""
 MODEL=""
-MINIMAL_STATUS=false
 # Flags after `--`, passed to claude in every pane this run starts.
 CLAUDE_ARGS=()
 
@@ -558,6 +559,7 @@ ${b}Start${r}
     --model NAME              start the new panes with this model (opus, sonnet, haiku or a model id)
     --grid NAME               use the grid named NAME (started if needed), even if attached elsewhere
     --minimal-status          a one-line Claude statusLine in the new panes (see MINIMAL_STATUS_COMMAND)
+    --no-minimal-status       your own statusLine in the new panes, when MINIMAL_STATUS=true
     -- FLAGS...               pass the rest to claude in each new pane, e.g. -- --worktree --effort high
 
 ${b}Manage${r}
@@ -970,6 +972,9 @@ while [ $# -gt 0 ]; do
       shift ;;
     --minimal-status)
       MINIMAL_STATUS=true
+      shift ;;
+    --no-minimal-status)
+      MINIMAL_STATUS=false
       shift ;;
     --grid | -g)
       [ -n "${2:-}" ] || die "$1 needs a grid name"

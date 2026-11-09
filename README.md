@@ -72,9 +72,27 @@ offers to open the settings menu.
 | `-y` | accept the defaults without asking |
 | `--uninstall` | remove claude-grid (your settings stay in `~/.config/claude-grid`) |
 
-**Upgrade:** `git pull` (with `--copy`, run `./install.sh --copy` again afterwards).
-
 Run `claude-grid doctor` to check the setup.
+
+## Upgrade
+
+The default install links to your checkout, so upgrading is a pull:
+
+```sh
+cd claude-grid
+git pull
+```
+
+If you installed with `--copy`, run the installer again after pulling, with the same options
+(for example `./install.sh --copy`, plus `--prefix` if you used one).
+
+Upgrades never touch your settings in `~/.config/claude-grid`. Settings added in a new version
+start at their defaults, so nothing changes until you turn them on; `claude-grid config` lists
+them.
+
+Grids that are already open keep running, and their Claude sessions aren't restarted. They
+switch to the new version the next time you run `claude-grid` in them, or press the prefix and
+`r`. Run `claude-grid doctor` afterwards to check the setup.
 
 ## Uninstall
 
@@ -129,9 +147,14 @@ Running `claude-grid DIR` while a grid is open adds panes to it.
 
 ### A shorter statusLine
 
-A multi-line Claude statusLine takes a lot of room in a small pane. `--minimal-status` gives
-the panes that run starts a one-line statusLine instead. Without `--minimal-status`, panes show
-your own statusLine, unchanged.
+A multi-line Claude statusLine takes a lot of room in a small pane, so claude-grid can give
+panes a one-line statusLine instead. It's off by default: panes show your own statusLine,
+unchanged.
+
+- `--minimal-status` turns it on for the panes that run starts.
+- `MINIMAL_STATUS=true` in your [settings](#settings) turns it on for every new pane, including
+  the ones you add with `c` and `C` inside a grid. `--no-minimal-status` then turns it off for
+  one run.
 
 ```
 api · main · Opus 5.5 high · 42% context · $1.23
@@ -264,7 +287,8 @@ setting with its default.
 | `THEME` | `default` | color theme, see below |
 | `COLOR_WAITING`, `COLOR_ACTIVE`, `COLOR_BORDER`, `COLOR_TEXT`, `COLOR_STATUS` | from the theme | single colors, `#RRGGBB`; each overrides the theme |
 | `CLAUDE_COMMAND` | `claude` | what each pane runs; add flags here, e.g. `claude --model opus` |
-| `MINIMAL_STATUS_COMMAND` | empty | the statusLine command for `--minimal-status` panes; empty uses claude-grid's one-liner |
+| `MINIMAL_STATUS` | `false` | give new panes a one-line statusLine; see [A shorter statusLine](#a-shorter-statusline) |
+| `MINIMAL_STATUS_COMMAND` | empty | the statusLine command for minimal-status panes; empty uses claude-grid's one-liner |
 | `launcher=` | none | see [Project launchers](#project-launchers) |
 
 ### Themes
