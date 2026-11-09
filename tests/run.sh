@@ -301,6 +301,36 @@ expect "switching themes keeps a color override" 'kept your color overrides: COL
 expect "the override is saved" '^COLOR_ACTIVE=#112233$' cat "$CONFIG"
 write_config
 
+section "config subcommands"
+write_config
+expect "set changes a setting" 'FADE = 30' cg config set FADE=30
+expect "and saves it" '^FADE=30$' cat "$CONFIG"
+expect "set takes several pairs" 'AUTO_FLOAT = off' cg config set AUTO_FLOAT=off START_FLOATING=true
+cg config set COLOR_STATUS=#101010 >/dev/null 2>&1
+expect "running grids pick up set right away" 'bg=#101010' tg main show -gv status-style
+cp "$CONFIG" "$WORK/config.before"
+expect "set rejects a bad value" 'FADE must be 0-90' cg config set FLOAT_WIDTH=60 FADE=95
+expect "set rejects an unknown setting" 'unknown setting NOPE' cg config set NOPE=1
+expect "set rejects a key tmux doesn't know" "doesn't know the key C-Spce" cg config set PREFIX=C-Spce
+check "a rejected set saves nothing, not even the valid pairs" cmp -s "$CONFIG" "$WORK/config.before"
+cg config set COLOR_ACTIVE=#112233 >/dev/null 2>&1
+expect "set THEME keeps color overrides" 'kept your color overrides: COLOR_ACTIVE' cg config set THEME=nord
+expect "unset puts a setting back" 'FADE = 55 \(the default\)' cg config unset FADE
+check "and removes it from the file" sh -c "! grep -q '^FADE=' '$CONFIG'"
+expect "unset of a color goes back to the theme's value" 'COLOR_ACTIVE = #88C0D0' cg config unset COLOR_ACTIVE
+expect "add-launcher adds a rule" 'launcher \*/logs_harness → mise run claude' cg config add-launcher '*/logs_harness' 'mise run claude'
+expect "and saves it" '^launcher=\*/logs_harness\|mise run claude$' cat "$CONFIG"
+expect "adding the same rule again is a no-op" 'already set' cg config add-launcher '*/logs_harness' 'mise run claude'
+expect "add-launcher rejects | in the glob" "can't contain \|" cg config add-launcher '*/a|b' 'x'
+expect "add-launcher needs both parts" 'usage: claude-grid config add-launcher' cg config add-launcher '*/a'
+expect "show lists changed settings and launchers" 'launcher +\*/logs_harness → mise run claude' cg config show
+expect "show marks changed settings" '^\* THEME +nord$' cg config show
+expect "remove-launcher removes the rule" 'removed launcher \*/logs_harness' cg config remove-launcher '*/logs_harness'
+check "and it's gone from the file" sh -c "! grep -q '^launcher=' '$CONFIG'"
+expect "remove-launcher of a missing rule fails" 'no launcher for \*/nope' cg config remove-launcher '*/nope'
+expect "unknown config commands are refused" 'unknown config command: bogus' cg config bogus
+write_config
+
 section "Install"
 prefix="$WORK/prefix"
 expect "installs a link" "$prefix/bin/claude-grid → $REPO/bin/claude-grid" "$BASH_BIN" "$REPO/install.sh" --prefix "$prefix" -y

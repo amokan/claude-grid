@@ -275,6 +275,17 @@ example `claude-grid --grid review ~/api`.
 you type, and saves only the values you changed to `~/.config/claude-grid/config`. Running
 grids switch to the new settings right away.
 
+To change settings in one command instead, for example in a setup script:
+
+```sh
+claude-grid config set FADE=40 THEME=nord     # one or more KEY=VALUE pairs
+claude-grid config unset FADE                 # back to the default
+claude-grid config show                       # what's set, with changes marked
+```
+
+`set` checks every value the same way the menu does and saves nothing if any of them is
+wrong. Running grids switch to the new settings right away here too.
+
 You can also edit the file by hand (`claude-grid config --edit`). It's plain `KEY=value` lines,
 read but never executed. [`config.example`](libexec/claude-grid/config.example) lists every
 setting with its default.
@@ -309,12 +320,20 @@ in that folder replaces a bundled theme with the same name.
 
 Some projects start Claude through their own command, for example to load secrets from a
 `.env` file first. A launcher rule makes panes in matching folders run that command instead of
-`CLAUDE_COMMAND`. Add one in `claude-grid config` (the `LAUNCHERS` item), or as a line in the
-config file:
+`CLAUDE_COMMAND`. Add one in `claude-grid config` (the `LAUNCHERS` item), with one command:
+
+```sh
+claude-grid config add-launcher '*/my_project' 'mise run claude'
+claude-grid config remove-launcher '*/my_project'     # and to remove it again
+```
+
+or as a line in the config file:
 
 ```
 launcher=*/my_project|mise run claude
 ```
+
+Quote both parts of `add-launcher`, so your shell leaves the `*` alone.
 
 The part before `|` is a glob, matched against the pane folder's full path:
 

@@ -568,6 +568,11 @@ ${b}Manage${r}
   claude-grid kill [NAME]     end a grid: the one you're in, or the only one running
   claude-grid kill --all      end every grid
   claude-grid config          change settings in a menu (--edit opens the file in \$EDITOR)
+    config set KEY=VALUE...   change settings without the menu, e.g. config set FADE=40 THEME=nord
+    config unset KEY...       put settings back to their defaults
+    config add-launcher GLOB COMMAND     e.g. config add-launcher '*/my_project' 'mise run claude'
+    config remove-launcher GLOB          remove the launcher rules for that folder glob
+    config show               print the current settings and launchers
   claude-grid themes          preview the color themes
   claude-grid doctor          check tmux, claude and the install
   claude-grid colors          show the current colors as swatches
@@ -866,18 +871,132 @@ config_menu() {
   done
 }
 
+# Saves the settings and applies them to running grids, the same as saving in the menu.
+save_settings() {
+  write_config
+  write_generated
+  ui_ok "saved $CONFIG_FILE"
+  if [ -n "$(grid_names)" ]; then
+    refresh_running_grids
+    ui_ok "running grids now use the new settings"
+  fi
+}
+
+# claude-grid config set KEY=VALUE...: checks every pair before saving any of them.
+config_set() {
+  local pair key value msg
+  [ $# -gt 0 ] || die "usage: claude-grid config set KEY=VALUE..."
+  for pair in "$@"; do
+    [[ "$pair" == ?*=* ]] || die "expected KEY=VALUE, got: $pair"
+    key="${pair%%=*}"
+    value="${pair#*=}"
+    is_one_of "$key" "$SETTING_KEYS" || die "unknown setting $key (settings: $SETTING_KEYS)"
+    msg="$(validate_setting "$key" "$value")" || die "$key $msg (got $value)"
+    if [ "$key" = PREFIX ] && ! tmux_knows_key "$value"; then
+      die "tmux doesn't know the key $value (examples: C-Space, C-a, M-Space)"
+    fi
+  done
+  for pair in "$@"; do
+    key="${pair%%=*}"
+    value="${pair#*=}"
+    if [ "$key" = THEME ]; then
+      switch_theme "$value"
+      [ -z "$KEPT_OVERRIDES" ] || ui_note "kept your color overrides:$KEPT_OVERRIDES (reset one with claude-grid config unset)"
+    else
+      printf -v "$key" '%s' "$value"
+    fi
+    ui_ok "$key = ${value:-$(empty_means "$key")}"
+  done
+  save_settings
+}
+
+# claude-grid config unset KEY...: puts settings back to their defaults.
+config_unset() {
+  local key base
+  [ $# -gt 0 ] || die "usage: claude-grid config unset KEY..."
+  for key in "$@"; do
+    is_one_of "$key" "$SETTING_KEYS" || die "unknown setting $key (settings: $SETTING_KEYS)"
+  done
+  for key in "$@"; do
+    case "$key" in
+      THEME) switch_theme "$(builtin_default THEME)" ;;
+      COLOR_*) base="BASE_$key"; printf -v "$key" '%s' "${!base}" ;;
+      *) printf -v "$key" '%s' "$(default_of "$key")" ;;
+    esac
+    ui_ok "$key = ${!key:-$(empty_means "$key")} (the default)"
+  done
+  save_settings
+}
+
+config_add_launcher() {
+  local glob command rule msg
+  [ $# -eq 2 ] || die "usage: claude-grid config add-launcher FOLDER-GLOB COMMAND (quote both)"
+  glob="$(trim "$1")"
+  command="$(trim "$2")"
+  [[ "$glob" != *'|'* ]] || die "the folder glob can't contain |"
+  msg="$(validate_launcher "$glob|$command")" || die "launcher $msg"
+  for rule in ${LAUNCHERS[@]+"${LAUNCHERS[@]}"}; do
+    if [ "$rule" = "$glob|$command" ]; then
+      ui_note "that launcher is already set: $glob → $command"
+      return 0
+    fi
+  done
+  LAUNCHERS+=("$glob|$command")
+  ui_ok "launcher $glob → $command"
+  save_settings
+}
+
+config_remove_launcher() {
+  local glob rule kept=() removed=0
+  [ $# -eq 1 ] || die "usage: claude-grid config remove-launcher FOLDER-GLOB"
+  glob="$(trim "$1")"
+  for rule in ${LAUNCHERS[@]+"${LAUNCHERS[@]}"}; do
+    if [ "${rule%%|*}" = "$glob" ]; then
+      removed=$((removed + 1))
+      ui_ok "removed launcher $glob → ${rule#*|}"
+    else
+      kept+=("$rule")
+    fi
+  done
+  [ "$removed" -gt 0 ] || die "no launcher for $glob (see claude-grid config show)"
+  LAUNCHERS=(${kept[@]+"${kept[@]}"})
+  save_settings
+}
+
+config_show() {
+  local key value rule
+  for key in $SETTING_KEYS; do
+    value="${!key}"
+    if [ "$value" = "$(default_of "$key")" ]; then
+      printf '  %-24s %s\n' "$key" "${value:-$(empty_means "$key")}"
+    else
+      printf '%s %-24s %s%s%s\n' "$(ui_fg "$COLOR_WAITING")*$UI_RESET" "$key" "$UI_BOLD" "$value" "$UI_RESET"
+    fi
+  done
+  for rule in ${LAUNCHERS[@]+"${LAUNCHERS[@]}"}; do
+    printf '%s %-24s %s → %s\n' "$(ui_fg "$COLOR_WAITING")*$UI_RESET" "launcher" "${rule%%|*}" "${rule#*|}"
+  done
+  echo
+  echo "  $(ui_dim "* changed from the default · $CONFIG_FILE")"
+}
+
 cmd_config() {
-  case "${1:-}" in
+  local command="${1:-}"
+  [ $# -eq 0 ] || shift
+  case "$command" in
     --edit)
       if [ ! -f "$CONFIG_FILE" ]; then
         mkdir -p "$CONFIG_DIR"
         cp "$LIBEXEC/config.example" "$CONFIG_FILE"
       fi
       exec ${VISUAL:-${EDITOR:-vi}} "$CONFIG_FILE" ;;
-    '')
-      load_config
-      config_menu ;;
-    *) die "unknown config option: $1 (use claude-grid config or claude-grid config --edit)" ;;
+    '') load_config; config_menu ;;
+    set) load_config; config_set "$@" ;;
+    unset) load_config; config_unset "$@" ;;
+    add-launcher) load_config; config_add_launcher "$@" ;;
+    remove-launcher) load_config; config_remove_launcher "$@" ;;
+    show) load_config; config_show ;;
+    *) die "unknown config command: $command (see claude-grid -h)" ;;
   esac
 }
 
