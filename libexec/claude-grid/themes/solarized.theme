@@ -1,0 +1,8 @@
+# Solarized dark: yellow and blue on base03.
+# Needs-input stays orange or yellow and the focused pane blue, a pair red-green color-blind
+# users can tell apart.
+COLOR_WAITING=#B58900
+COLOR_ACTIVE=#268BD2
+COLOR_BORDER=#073642
+COLOR_TEXT=#93A1A1
+COLOR_STATUS=#002B36

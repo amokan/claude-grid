@@ -1,0 +1,946 @@
+#!/usr/bin/env bash
+# claude-grid - a tiled tmux grid of Claude Code sessions, each grid on its own private tmux server.
+#
+# Defaults live in this script. Overrides go in ~/.config/claude-grid/config; change them with
+# `claude-grid config`. Run `claude-grid -h` for usage.
+
+set -euo pipefail
+
+readonly VERSION="0.1.0"
+readonly SOCKET_PREFIX="claude-grid"
+readonly SESSION="claude"
+
+die() { echo "claude-grid: $*" >&2; exit 1; }
+
+# Follows symlinks without `readlink -f`, which older macOS lacks.
+resolve_path() {
+  local path="$1" dir
+  while [ -L "$path" ]; do
+    dir="$(cd -P "$(dirname "$path")" && pwd)"
+    path="$(readlink "$path")"
+    case "$path" in /*) ;; *) path="$dir/$path" ;; esac
+  done
+  echo "$(cd -P "$(dirname "$path")" && pwd)/$(basename "$path")"
+}
+
+SELF="$(resolve_path "${BASH_SOURCE[0]}")"
+LIBEXEC="$(cd "$(dirname "$SELF")/../libexec/claude-grid" 2>/dev/null && pwd)" ||
+  die "support files not found next to $SELF (expected ../libexec/claude-grid); reinstall with install.sh"
+readonly SELF LIBEXEC
+readonly CONFIG_DIR="${XDG_CONFIG_HOME:-$HOME/.config}/claude-grid"
+readonly CONFIG_FILE="$CONFIG_DIR/config"
+readonly STATE_DIR="${XDG_STATE_HOME:-$HOME/.local/state}/claude-grid"
+
+# shellcheck source=../libexec/claude-grid/ui.sh
+. "$LIBEXEC/ui.sh"
+
+# ---- Settings ---------------------------------------------------------------
+
+readonly COLOR_KEYS="COLOR_WAITING COLOR_ACTIVE COLOR_BORDER COLOR_TEXT COLOR_STATUS"
+readonly SETTING_KEYS="PREFIX START_FLOATING AUTO_FLOAT FLOAT_WIDTH FLOAT_HEIGHT FADE SWITCH_GRACE_MS
+THEME $COLOR_KEYS CLAUDE_COMMAND"
+
+builtin_default() {
+  case "$1" in
+    PREFIX) echo "C-Space" ;;
+    START_FLOATING) echo "false" ;;
+    AUTO_FLOAT) echo "on" ;;
+    FLOAT_WIDTH) echo "80" ;;
+    FLOAT_HEIGHT) echo "78" ;;
+    FADE) echo "55" ;;
+    SWITCH_GRACE_MS) echo "800" ;;
+    THEME) echo "default" ;;
+    COLOR_WAITING) echo "#E69F00" ;;
+    COLOR_ACTIVE) echo "#56B4E9" ;;
+    COLOR_BORDER) echo "#3a3a3a" ;;
+    COLOR_TEXT) echo "#d0d0d0" ;;
+    COLOR_STATUS) echo "#262626" ;;
+    CLAUDE_COMMAND) echo "claude" ;;
+  esac
+}
+
+# A color's default is its value in the current theme.
+default_of() {
+  case "$1" in
+    COLOR_*) local base="BASE_$1"; echo "${!base}" ;;
+    *) builtin_default "$1" ;;
+  esac
+}
+
+describe() {
+  case "$1" in
+    PREFIX) echo "chord prefix, as a tmux key name: C-Space, C-a, M-Space, C-b ..." ;;
+    START_FLOATING) echo "true: the first pane floats as soon as a grid opens" ;;
+    AUTO_FLOAT) echo "on: switching to a pane floats it over the grid (toggle live: PREFIX F)" ;;
+    FLOAT_WIDTH) echo "floating pane width, % of the window" ;;
+    FLOAT_HEIGHT) echo "floating pane height, % of the window" ;;
+    FADE) echo "how much to fade the grid behind a floating pane, 0-90 % (0 = off)" ;;
+    SWITCH_GRACE_MS) echo "after switching panes, Enter / arrows / 1-9 stay tmux keys this long" ;;
+    THEME) echo "color theme; COLOR_* settings override single colors (list: claude-grid themes)" ;;
+    COLOR_WAITING) echo "needs input" ;;
+    COLOR_ACTIVE) echo "focused pane and tags" ;;
+    COLOR_BORDER) echo "other pane borders" ;;
+    COLOR_TEXT) echo "border and status text" ;;
+    COLOR_STATUS) echo "status bar background" ;;
+    CLAUDE_COMMAND) echo "what each pane runs; add flags here, e.g. claude --model opus" ;;
+  esac
+}
+
+is_one_of() { case " $(echo $2) " in *" $1 "*) return 0 ;; *) return 1 ;; esac; }
+
+# Prints why a value is invalid and fails, or succeeds silently.
+validate_setting() {
+  local key="$1" value="$2" re
+  case "$key" in
+    PREFIX)
+      [ -n "$value" ] && [[ "$value" != *[[:space:]]* ]] || { echo "must be a tmux key name such as C-Space"; return 1; } ;;
+    START_FLOATING)
+      [ "$value" = true ] || [ "$value" = false ] || { echo "must be true or false"; return 1; } ;;
+    AUTO_FLOAT)
+      [ "$value" = on ] || [ "$value" = off ] || { echo "must be on or off"; return 1; } ;;
+    FLOAT_WIDTH | FLOAT_HEIGHT)
+      re='^([1-9][0-9]?|100)$'
+      [[ "$value" =~ $re ]] || { echo "must be 1-100"; return 1; } ;;
+    FADE)
+      re='^([0-9]|[1-8][0-9]|90)$'
+      [[ "$value" =~ $re ]] || { echo "must be 0-90"; return 1; } ;;
+    SWITCH_GRACE_MS)
+      re='^[0-9]+$'
+      [[ "$value" =~ $re ]] || { echo "must be a number of milliseconds"; return 1; } ;;
+    THEME)
+      theme_file "$value" >/dev/null || { echo "must be one of: $(echo $(theme_names))"; return 1; } ;;
+    COLOR_*)
+      re='^#[0-9a-fA-F]{6}$'
+      [[ "$value" =~ $re ]] || { echo "must look like #RRGGBB"; return 1; } ;;
+    CLAUDE_COMMAND)
+      [ -n "$value" ] || { echo "must not be empty"; return 1; } ;;
+  esac
+}
+
+# Prints why a launcher rule is invalid and fails, or succeeds silently.
+validate_launcher() {
+  [[ "$1" == ?*'|'?* ]] || { echo "must look like folder-glob|command"; return 1; }
+}
+
+for key in $SETTING_KEYS; do
+  printf -v "$key" '%s' "$(builtin_default "$key")"
+  case "$key" in COLOR_*) printf -v "BASE_$key" '%s' "$(builtin_default "$key")" ;; esac
+done
+# Folders whose Claude must start through a project launcher instead of CLAUDE_COMMAND.
+# Each entry is "folder-glob|command"; claude-grid passes its hook flags in $CLAUDE_EXTRA_ARGS.
+LAUNCHERS=()
+
+trim() {
+  local s="$1"
+  s="${s#"${s%%[![:space:]]*}"}"
+  s="${s%"${s##*[![:space:]]}"}"
+  printf '%s' "$s"
+}
+
+unquote() {
+  local s="$1"
+  if [ "${#s}" -ge 2 ]; then
+    case "$s" in \"*\" | \'*\') s="${s:1:${#s}-2}" ;; esac
+  fi
+  printf '%s' "$s"
+}
+
+# Calls `callback LINE-NUMBER KEY VALUE` for each KEY=value line. The file is parsed, never run.
+read_kv() {
+  local file="$1" callback="$2" line n=0
+  while IFS= read -r line || [ -n "$line" ]; do
+    n=$((n + 1))
+    line="$(trim "$line")"
+    case "$line" in '' | '#'*) continue ;; esac
+    [[ "$line" == *=* ]] || die "$file:$n: expected KEY=value, got: $line"
+    "$callback" "$n" "$(trim "${line%%=*}")" "$(unquote "$(trim "${line#*=}")")"
+  done <"$file"
+}
+
+# ---- Themes -------------------------------------------------------------------
+
+# User themes in ~/.config/claude-grid/themes override bundled ones with the same name.
+theme_file() {
+  local dir re='^[A-Za-z0-9_-]+$'
+  [[ "$1" =~ $re ]] || return 1
+  for dir in "$CONFIG_DIR/themes" "$LIBEXEC/themes"; do
+    [ -f "$dir/$1.theme" ] && { echo "$dir/$1.theme"; return 0; }
+  done
+  return 1
+}
+
+theme_names() {
+  local dir file
+  for dir in "$CONFIG_DIR/themes" "$LIBEXEC/themes"; do
+    for file in "$dir"/*.theme; do [ -f "$file" ] && basename "$file" .theme; done
+  done | sort -u | awk '$0 == "default" { print; next } { rest[++n] = $0 } END { for (i = 1; i <= n; i++) print rest[i] }'
+}
+
+THEME_FILE=""
+on_theme_line() {
+  local n="$1" key="$2" value="$3" msg
+  is_one_of "$key" "$COLOR_KEYS" || die "$THEME_FILE:$n: a theme only sets $(echo $COLOR_KEYS) (got $key)"
+  msg="$(validate_setting "$key" "$value")" || die "$THEME_FILE:$n: $key $msg (got $value)"
+  printf -v "$4$key" '%s' "$value"
+}
+
+# Reads a theme's colors into PREFIX + COLOR_* variables (BASE_ by default).
+load_theme() {
+  local name="$1" prefix="${2:-BASE_}" key
+  THEME_FILE="$(theme_file "$name")" || die "unknown theme $name (themes: $(echo $(theme_names)))"
+  for key in $COLOR_KEYS; do printf -v "$prefix$key" '%s' "$(builtin_default "$key")"; done
+  # shellcheck disable=SC2317 # called through read_kv
+  theme_line() { on_theme_line "$1" "$2" "$3" "$prefix"; }
+  read_kv "$THEME_FILE" theme_line
+}
+
+# Points the colors at a new theme. Colors that matched the old theme follow it; others stay
+# as overrides, listed in KEPT_OVERRIDES.
+KEPT_OVERRIDES=""
+switch_theme() {
+  local new="$1" key base
+  KEPT_OVERRIDES=""
+  for key in $COLOR_KEYS; do
+    base="BASE_$key"
+    [ "${!key}" = "${!base}" ] || KEPT_OVERRIDES="$KEPT_OVERRIDES $key"
+  done
+  load_theme "$new"
+  THEME="$new"
+  for key in $COLOR_KEYS; do
+    is_one_of "$key" "$KEPT_OVERRIDES" && continue
+    base="BASE_$key"
+    printf -v "$key" '%s' "${!base}"
+  done
+}
+
+# ---- Config file --------------------------------------------------------------
+
+CONFIG_KEYS=()
+CONFIG_VALUES=()
+on_config_line() {
+  local n="$1" key="$2" value="$3" msg
+  if [ "$key" = launcher ]; then
+    msg="$(validate_launcher "$value")" || die "$CONFIG_FILE:$n: launcher $msg"
+    LAUNCHERS+=("$value")
+  elif is_one_of "$key" "$SETTING_KEYS"; then
+    msg="$(validate_setting "$key" "$value")" || die "$CONFIG_FILE:$n: $key $msg (got $value)"
+    CONFIG_KEYS+=("$key")
+    CONFIG_VALUES+=("$value")
+  else
+    die "$CONFIG_FILE:$n: unknown setting $key"
+  fi
+}
+
+load_config() {
+  local i key base
+  CONFIG_KEYS=()
+  CONFIG_VALUES=()
+  LAUNCHERS=()
+  [ ! -f "$CONFIG_FILE" ] || read_kv "$CONFIG_FILE" on_config_line
+  # The theme goes first so COLOR_* lines can override single colors.
+  for ((i = 0; i < ${#CONFIG_KEYS[@]}; i++)); do
+    [ "${CONFIG_KEYS[$i]}" != THEME ] || THEME="${CONFIG_VALUES[$i]}"
+  done
+  if theme_file "$THEME" >/dev/null || [ "$THEME" != default ]; then
+    load_theme "$THEME"
+  fi
+  for key in $COLOR_KEYS; do
+    base="BASE_$key"
+    printf -v "$key" '%s' "${!base}"
+  done
+  for ((i = 0; i < ${#CONFIG_KEYS[@]}; i++)); do
+    printf -v "${CONFIG_KEYS[$i]}" '%s' "${CONFIG_VALUES[$i]}"
+  done
+}
+
+# Keeps a value intact through the loader's quote stripping.
+config_value() {
+  case "$1" in \"*\" | \'*\') printf '"%s"' "$1" ;; *) printf '%s' "$1" ;; esac
+}
+
+write_config() {
+  mkdir -p "$CONFIG_DIR"
+  local tmp key launcher value
+  tmp="$(mktemp "$CONFIG_DIR/config.XXXXXX")"
+  {
+    echo "# claude-grid settings: only the values that differ from the defaults."
+    echo "# \`claude-grid config\` rewrites this file, so comments added here are not kept."
+    echo "# Every setting and its default: $LIBEXEC/config.example"
+    for key in $SETTING_KEYS; do
+      value="${!key}"
+      [ "$value" = "$(default_of "$key")" ] && continue
+      printf '\n# %s\n%s=%s\n' "$(describe "$key")" "$key" "$(config_value "$value")"
+    done
+    if [ ${#LAUNCHERS[@]} -gt 0 ]; then
+      printf '\n# Folders whose Claude starts through a project launcher: folder-glob|command\n'
+      for launcher in "${LAUNCHERS[@]}"; do echo "launcher=$launcher"; done
+    fi
+  } >"$tmp"
+  mv "$tmp" "$CONFIG_FILE"
+}
+
+# ---- Generated files ----------------------------------------------------------
+
+# Quotes a value for a tmux config file.
+tmux_quote() {
+  case "$1" in
+    *"'"*) local s="${1//\\/\\\\}"; s="${s//\"/\\\"}"; s="${s//\$/\\\$}"; printf '"%s"' "$s" ;;
+    *) printf "'%s'" "$1" ;;
+  esac
+}
+
+# Quotes a value for sh.
+sh_quote() { printf "'%s'" "${1//\'/\'\\\'\'}"; }
+
+json_escape() { local s="${1//\\/\\\\}"; printf '%s' "${s//\"/\\\"}"; }
+
+hook() {
+  local event="$1" state="$2" matcher="${3:-}"
+  local command
+  command="$(json_escape "$(sh_quote "$LIBEXEC/state.sh") $state")"
+  if [ -n "$matcher" ]; then
+    printf '    "%s": [{ "matcher": "%s", "hooks": [{ "type": "command", "command": "%s" }] }]' "$event" "$matcher" "$command"
+  else
+    printf '    "%s": [{ "hooks": [{ "type": "command", "command": "%s" }] }]' "$event" "$command"
+  fi
+}
+
+# Writes the tmux config every grid server starts with, and the Claude hooks file.
+# Both are rebuilt on every run, so they always match the current settings and install path.
+write_generated() {
+  mkdir -p "$STATE_DIR"
+  local tmp
+  tmp="$(mktemp "$STATE_DIR/grid.conf.XXXXXX")"
+  cat >"$tmp" <<EOF
+# Generated by claude-grid on every run from its defaults and $CONFIG_FILE. Don't edit:
+# change settings with \`claude-grid config\`, or add tmux overrides to $CONFIG_DIR/tmux.local.conf.
+source-file $(tmux_quote "$LIBEXEC/tmux.conf")
+set -g @cg_bin $(tmux_quote "$SELF")
+set -g @cg_libexec $(tmux_quote "$LIBEXEC")
+set -g @cg_state $(tmux_quote "$STATE_DIR")
+set -g prefix $(tmux_quote "$PREFIX")
+bind $(tmux_quote "$PREFIX") send-prefix
+set -g repeat-time $SWITCH_GRACE_MS
+set -g @cg_prefix $(tmux_quote "$PREFIX")
+set -g @cg_float_width $FLOAT_WIDTH
+set -g @cg_float_height $FLOAT_HEIGHT
+set -g @cg_fade $FADE
+set -g @cg_color_waiting "$COLOR_WAITING"
+set -g @cg_color_active "$COLOR_ACTIVE"
+set -g @cg_color_border "$COLOR_BORDER"
+set -g @cg_color_text "$COLOR_TEXT"
+set -g @cg_color_status "$COLOR_STATUS"
+set -g pane-border-style "#{?#{==:#{@claude_state},waiting},bg=$COLOR_WAITING,bg=$COLOR_BORDER}"
+set -g pane-active-border-style "#{?#{==:#{@claude_state},waiting},bg=$COLOR_WAITING,bg=$COLOR_ACTIVE}"
+set -g status-style "bg=$COLOR_STATUS fg=$COLOR_TEXT"
+source-file -q $(tmux_quote "$CONFIG_DIR/tmux.local.conf")
+EOF
+  mv "$tmp" "$STATE_DIR/grid.conf"
+
+  tmp="$(mktemp "$STATE_DIR/claude-hooks.json.XXXXXX")"
+  {
+    echo '{'
+    echo '  "hooks": {'
+    hook SessionStart idle; echo ','
+    hook UserPromptSubmit working; echo ','
+    hook PreToolUse tool '*'; echo ','
+    hook PostToolUse working '*'; echo ','
+    hook PermissionRequest waiting '*'; echo ','
+    hook Notification waiting 'permission_prompt|elicitation_dialog'; echo ','
+    hook Stop done; echo
+    echo '  }'
+    echo '}'
+  } >"$tmp"
+  mv "$tmp" "$STATE_DIR/claude-hooks.json"
+}
+
+# ---- Grids --------------------------------------------------------------------
+
+GRID=""
+MODEL=""
+
+valid_grid_name() { local re='^[A-Za-z0-9_-]+$'; [[ "$1" =~ $re ]]; }
+
+# tmux for one grid; t() targets $GRID.
+tg() { local grid="$1"; shift; tmux -L "$SOCKET_PREFIX-$grid" -f "$STATE_DIR/grid.conf" "$@"; }
+t() { tg "$GRID" "$@"; }
+
+grid_running() { tg "$1" has-session -t "$SESSION" 2>/dev/null; }
+
+grid_attached() { [ "$(tg "$1" display -p -t "$SESSION" '#{session_attached}' 2>/dev/null)" != 0 ]; }
+
+# Running grids, "main" first.
+grid_names() {
+  local dir socket name
+  dir="${TMUX_TMPDIR:-/tmp}/tmux-$(id -u)"
+  for socket in "$dir/$SOCKET_PREFIX"-*; do
+    [ -S "$socket" ] || continue
+    name="${socket##*/"$SOCKET_PREFIX"-}"
+    if valid_grid_name "$name" && grid_running "$name"; then echo "$name"; fi
+  done | awk '$0 == "main" { print; next } { rest[++n] = $0 } END { for (i = 1; i <= n; i++) print rest[i] }'
+}
+
+# The grid this shell runs inside, if any.
+current_grid() {
+  local socket="${TMUX:-}"
+  socket="${socket%%,*}"
+  socket="${socket##*/}"
+  case "$socket" in "$SOCKET_PREFIX"-?*) echo "${socket#"$SOCKET_PREFIX"-}" ;; esac
+}
+
+# A grid with no terminal attached, else a new grid name.
+pick_grid() {
+  local name n=2
+  for name in $(grid_names); do
+    grid_attached "$name" || { echo "$name"; return; }
+  done
+  grid_running main || { echo main; return; }
+  while grid_running "$n"; do n=$((n + 1)); done
+  echo "$n"
+}
+
+check_tmux() {
+  command -v tmux >/dev/null || die "tmux not found; claude-grid needs tmux 3.8 or newer"
+  local version re='^([0-9]+)\.([0-9]+)'
+  version="$(tmux -V)"
+  version="${version#tmux }"
+  version="${version#next-}"
+  [ "$version" = master ] && return 0
+  [[ "$version" =~ $re ]] || return 0
+  if [ "${BASH_REMATCH[1]}" -lt 3 ] || { [ "${BASH_REMATCH[1]}" -eq 3 ] && [ "${BASH_REMATCH[2]}" -lt 8 ]; }; then
+    die "tmux $version is too old; claude-grid needs tmux 3.8 or newer for floating panes"
+  fi
+}
+
+claude_cmd() {
+  local dir="$1" rule flags launch
+  flags="--settings $(printf '%q' "$STATE_DIR/claude-hooks.json")"
+  [ -z "$MODEL" ] || flags="$flags --model $(printf '%q' "$MODEL")"
+  launch="$CLAUDE_COMMAND $flags"
+  for rule in ${LAUNCHERS[@]+"${LAUNCHERS[@]}"}; do
+    # shellcheck disable=SC2053 # the folder part is a glob on purpose
+    if [[ "$dir" == ${rule%%|*} ]]; then
+      launch="CLAUDE_EXTRA_ARGS=$(printf '%q' "$flags") ${rule#*|}"
+      break
+    fi
+  done
+  printf '%s || { s=$?; printf "\\n\\033[1mclaude-grid: claude launch exited with status %%s. Press Enter for a shell.\\033[0m " "$s"; read -r _; }; exec %q -l' \
+    "$launch" "${SHELL:-/bin/sh}"
+}
+
+tiled_pane() {
+  t list-panes -t "$SESSION" -F '#{pane_id} #{pane_floating_flag}' | awk '$2 == 0 { last = $1 } END { print last }'
+}
+
+term_size() {
+  local rows cols
+  read -r rows cols < <({ stty size </dev/tty; } 2>/dev/null || echo "50 200")
+  if [ "$1" = rows ]; then echo "$rows"; else echo "$cols"; fi
+}
+
+add_pane() {
+  local dir pane
+  dir="$(cd "$1" && pwd)"
+  if grid_running "$GRID"; then
+    pane="$(t split-window -d -t "$(tiled_pane)" -c "$dir" -P -F '#{pane_id}' "$(claude_cmd "$dir")")"
+    t select-layout -t "$SESSION" tiled
+  else
+    pane="$(t new-session -d -s "$SESSION" -c "$dir" -x "$(term_size cols)" -y "$(term_size rows)" -P -F '#{pane_id}' "$(claude_cmd "$dir")")"
+    t set -g @cg_grid "$GRID"
+    t set -g @cg_autofloat "$AUTO_FLOAT"
+  fi
+  t set -p -t "$pane" @claude_name "$(basename "$dir")"
+}
+
+float_sh() { t run-shell -t "$SESSION" "$(printf '%q' "$LIBEXEC/float.sh") $1 $(t display -p -t "$SESSION" '#{pane_id}')"; }
+
+# Applies regenerated settings to every running grid.
+refresh_running_grids() {
+  local name
+  for name in $(grid_names); do
+    GRID="$name"
+    t source-file "$STATE_DIR/grid.conf"
+    float_sh restyle
+  done
+}
+
+attach() {
+  local here
+  here="$(current_grid)"
+  if [ -n "$here" ]; then
+    [ "$here" = "$GRID" ] || echo "claude-grid: grid $GRID is ready; attach from another terminal: claude-grid attach $GRID"
+    exit 0
+  fi
+  [ -z "${TMUX:-}" ] || die "inside another tmux session; open a new terminal window and run claude-grid there"
+  exec tmux -L "$SOCKET_PREFIX-$GRID" attach -t "$SESSION"
+}
+
+# ---- Commands -----------------------------------------------------------------
+
+banner() { ui_banner "$COLOR_WAITING" "$COLOR_ACTIVE" "$COLOR_BORDER" "${1:-a tmux grid of Claude Code sessions · v$VERSION}"; }
+
+usage() {
+  local b="$UI_BOLD" r="$UI_RESET"
+  banner
+  cat <<EOF
+${b}Start${r}
+  claude-grid                 re-attach a detached grid, or start a new grid with one pane here
+  claude-grid DIR...          one Claude pane per directory, e.g. claude-grid ~/api ~/web
+  claude-grid DIR:N...        N panes in DIR, e.g. claude-grid ~/a:3 ~/b:2
+  claude-grid -n N            N panes in the current directory
+    --model NAME              start the new panes with this model (opus, sonnet, haiku or a model id)
+    --grid NAME               use the grid named NAME (started if needed), even if attached elsewhere
+
+${b}Manage${r}
+  claude-grid attach [NAME]   attach to a running grid
+  claude-grid ls              list grids, their panes and each pane's state
+  claude-grid kill [NAME]     end a grid: the one you're in, or the only one running
+  claude-grid kill --all      end every grid
+  claude-grid config          change settings in a menu (--edit opens the file in \$EDITOR)
+  claude-grid themes          preview the color themes
+  claude-grid doctor          check tmux, claude and the install
+  claude-grid colors          show the current colors as swatches
+
+A plain \`claude-grid\` in a second terminal opens a second grid instead of sharing the first.
+
+${b}Keys inside a grid${r}, after $PREFIX:
+  a  next waiting       1-9  pane          arrows  step        z  zoom
+  f  float              F    auto-float    Esc     unfloat     Enter  float (right after switching)
+  p  promote            g    grid          c       new claude here    C  new claude in a directory
+  q  close this grid    d    detach        r       reload
+
+$(ui_dim "Settings: $CONFIG_FILE")
+EOF
+}
+
+swatch() {
+  local hex="${1#\#}" fg="$2" label="$3" role="$4"
+  if [ "$UI_COLOR" = 1 ]; then
+    printf '  \033[48;2;%sm\033[38;2;%sm  %-26s \033[0m  #%s  %s\n' "$(ui_rgb "$hex")" "$fg" "$label" "$hex" "$role"
+  else
+    printf '  %-28s  #%s  %s\n' "$label" "$hex" "$role"
+  fi
+}
+
+show_colors() {
+  echo
+  echo "  ${UI_BOLD}Theme: $THEME${UI_RESET}"
+  echo
+  swatch "$COLOR_WAITING" "0;0;0" "⚠ 3:api  NEEDS INPUT" "COLOR_WAITING  needs input"
+  swatch "$COLOR_ACTIVE" "0;0;0" "● 5:sink  working" "COLOR_ACTIVE   focused pane, tags"
+  swatch "$COLOR_BORDER" "$(ui_rgb "$COLOR_TEXT")" "✓ 4:mapper  done" "COLOR_BORDER   other panes"
+  swatch "$COLOR_STATUS" "$(ui_rgb "$COLOR_TEXT")" "status bar" "COLOR_STATUS   status bar"
+  echo
+}
+
+# One line per theme: name, its five colors, and its description.
+theme_row() {
+  local name="$1" marker="${2:- }" key var desc
+  load_theme "$name" PREVIEW_
+  desc="$(sed -n '1s/^# *//p' "$THEME_FILE")"
+  printf '  %s %-12s ' "$marker" "$name"
+  for key in $COLOR_KEYS; do
+    var="PREVIEW_$key"
+    if [ "$UI_COLOR" = 1 ]; then printf '%s  %s' "$(ui_bg "${!var}")" "$UI_RESET"; fi
+  done
+  [ "$UI_COLOR" = 1 ] || printf '%s' "${PREVIEW_COLOR_WAITING} ${PREVIEW_COLOR_ACTIVE}"
+  printf '  %s\n' "$(ui_dim "$desc")"
+}
+
+cmd_themes() {
+  local name marker
+  banner "color themes"
+  for name in $(theme_names); do
+    marker=" "
+    [ "$name" != "$THEME" ] || marker="▸"
+    theme_row "$name" "$marker"
+  done
+  echo
+  echo "  Pick one with $(printf '%s' "${UI_BOLD}claude-grid config${UI_RESET}"), or add your own as"
+  echo "  $CONFIG_DIR/themes/NAME.theme (copy one from $LIBEXEC/themes)."
+  echo
+}
+
+cmd_ls() {
+  local names name state
+  names="$(grid_names)"
+  [ -n "$names" ] || { echo "claude-grid: no grid running"; return; }
+  for name in $names; do
+    if grid_attached "$name"; then state=attached; else state=detached; fi
+    echo "${UI_BOLD}grid $name${UI_RESET} $(ui_dim "($state)")"
+    tg "$name" list-panes -s -t "$SESSION" \
+      -F '  #{pane_index}  #{?#{@claude_state},#{@claude_state},idle}  #{@claude_name}  #{pane_current_path}'
+  done
+}
+
+cmd_kill() {
+  local names name target="${1:-}"
+  names="$(grid_names)"
+  if [ "$target" = --all ]; then
+    [ -n "$names" ] || { echo "claude-grid: no grid running"; return; }
+    for name in $names; do tg "$name" kill-server 2>/dev/null || true; done
+    echo "claude-grid: stopped every grid ($(echo $names))"
+    return
+  fi
+  [ -n "$target" ] || target="$(current_grid)"
+  if [ -z "$target" ]; then
+    [ -n "$names" ] || { echo "claude-grid: no grid running"; return; }
+    [ "$(echo "$names" | wc -l)" -eq 1 ] ||
+      die "several grids are running ($(echo $names)); name one, or use kill --all"
+    target="$names"
+  fi
+  valid_grid_name "$target" || die "not a grid name: $target"
+  grid_running "$target" || die "no grid named $target is running"
+  tg "$target" kill-server 2>/dev/null || true
+  echo "claude-grid: stopped grid $target"
+}
+
+cmd_attach() {
+  local names name
+  GRID="${1:-}"
+  if [ -z "$GRID" ]; then
+    names="$(grid_names)"
+    [ -n "$names" ] || die "no grid running; start one with claude-grid"
+    for name in $names; do
+      grid_attached "$name" || { GRID="$name"; break; }
+    done
+    if [ -z "$GRID" ]; then
+      [ "$(echo "$names" | wc -l)" -eq 1 ] || die "every grid is attached somewhere ($(echo $names)); name one"
+      GRID="$names"
+    fi
+  fi
+  valid_grid_name "$GRID" || die "not a grid name: $GRID"
+  grid_running "$GRID" || die "no grid named $GRID is running"
+  attach
+}
+
+# ---- Settings menu ------------------------------------------------------------
+
+MENU_MESSAGE=""
+CHANGED=false
+
+print_menu() {
+  local i=0 key value mark
+  ui_clear
+  banner "settings · $CONFIG_FILE"
+  for key in $SETTING_KEYS; do
+    i=$((i + 1))
+    value="${!key}"
+    mark=" "
+    [ "$value" = "$(default_of "$key")" ] || mark="$(ui_fg "$COLOR_WAITING")*$UI_RESET"
+    printf '  %2d %s %-16s ' "$i" "$mark" "$key"
+    case "$key" in COLOR_*) printf '%s ' "$(ui_chip "$value")" ;; esac
+    printf '%s%s%s\n' "$UI_BOLD" "$value" "$UI_RESET"
+  done
+  i=$((i + 1))
+  mark=" "
+  [ ${#LAUNCHERS[@]} -eq 0 ] || mark="$(ui_fg "$COLOR_WAITING")*$UI_RESET"
+  printf '  %2d %s %-16s %s\n' "$i" "$mark" "LAUNCHERS" "${#LAUNCHERS[@]} folder rule(s)"
+  echo
+  echo "  $(ui_dim "* changed from the default")"
+  if [ -n "$MENU_MESSAGE" ]; then
+    echo
+    echo "  $MENU_MESSAGE"
+    MENU_MESSAGE=""
+  fi
+  echo
+}
+
+edit_theme() {
+  local names name choice i
+  names=($(theme_names))
+  echo
+  i=0
+  for name in "${names[@]}"; do
+    i=$((i + 1))
+    printf '  %2d' "$i"
+    theme_row "$name" "$([ "$name" = "$THEME" ] && echo "▸" || echo " ")"
+  done
+  echo
+  read -r -p "  Theme number or name (Enter keeps $THEME): " choice || return 0
+  choice="$(trim "$choice")"
+  [ -n "$choice" ] || return 0
+  if [[ "$choice" =~ ^[0-9]+$ ]] && [ "$choice" -ge 1 ] && [ "$choice" -le ${#names[@]} ]; then
+    choice="${names[$((choice - 1))]}"
+  fi
+  if ! theme_file "$choice" >/dev/null; then
+    MENU_MESSAGE="$(ui_fail "no theme named $choice")"
+    return 0
+  fi
+  switch_theme "$choice"
+  CHANGED=true
+  MENU_MESSAGE="$(ui_ok "theme $choice")"
+  [ -z "$KEPT_OVERRIDES" ] || MENU_MESSAGE="$MENU_MESSAGE
+  $(ui_note "kept your color overrides:$KEPT_OVERRIDES (reset one with -)")"
+}
+
+# Asks a throwaway tmux server whether it accepts a key name. Fails only when tmux says the key
+# is bad, so a missing tmux (which doctor reports) doesn't block the setting.
+tmux_knows_key() {
+  command -v tmux >/dev/null || return 0
+  local name="$SOCKET_PREFIX.keycheck.$$" out
+  out="$(tmux -L "$name" -f /dev/null start-server \; set -g prefix "$1" 2>&1 || true)"
+  rm -f "${TMUX_TMPDIR:-/tmp}/tmux-$(id -u)/$name"
+  case "$out" in *"bad key"* | *"unknown key"*) return 1 ;; esac
+}
+
+edit_setting() {
+  local key="$1" value default msg
+  [ "$key" != THEME ] || { edit_theme; return; }
+  default="$(default_of "$key")"
+  echo
+  echo "  ${UI_BOLD}$key${UI_RESET}: $(describe "$key")"
+  while true; do
+    read -r -p "  New value [${!key}] (Enter keeps it, - resets to $default): " value || return 0
+    value="$(trim "$value")"
+    [ -n "$value" ] || return 0
+    [ "$value" != - ] || value="$default"
+    if [ "$key" = PREFIX ] && ! tmux_knows_key "$value"; then
+      ui_fail "tmux doesn't know the key $value (examples: C-Space, C-a, M-Space)"
+    elif msg="$(validate_setting "$key" "$value")"; then
+      printf -v "$key" '%s' "$value"
+      CHANGED=true
+      MENU_MESSAGE="$(ui_ok "$key = $value")"
+      return 0
+    fi
+    ui_fail "$key $msg"
+  done
+}
+
+edit_launchers() {
+  local choice glob command i rule msg
+  local kept
+  while true; do
+    ui_header "Launchers"
+    echo "  Folders whose Claude starts through a project launcher instead of CLAUDE_COMMAND."
+    echo "  The launcher must pass \$CLAUDE_EXTRA_ARGS on to claude, or its pane never shows NEEDS INPUT."
+    echo
+    if [ ${#LAUNCHERS[@]} -eq 0 ]; then
+      echo "  $(ui_dim "(none)")"
+    else
+      i=0
+      for rule in "${LAUNCHERS[@]}"; do i=$((i + 1)); printf '  %2d  %s  →  %s\n' "$i" "${rule%%|*}" "${rule#*|}"; done
+    fi
+    echo
+    read -r -p "  a to add, a number to remove, Enter when done: " choice || return 0
+    case "$choice" in
+      '') return 0 ;;
+      a | A)
+        read -r -p "  Folder glob (e.g. */my_project): " glob || return 0
+        read -r -p "  Command (e.g. mise run claude): " command || return 0
+        glob="$(trim "$glob")"
+        command="$(trim "$command")"
+        if [[ "$glob" == *'|'* ]]; then
+          ui_fail "the folder glob can't contain |"
+        elif msg="$(validate_launcher "$glob|$command")"; then
+          LAUNCHERS+=("$glob|$command")
+          CHANGED=true
+        else
+          ui_fail "launcher $msg"
+        fi ;;
+      *)
+        if [[ "$choice" =~ ^[0-9]+$ ]] && [ "$choice" -ge 1 ] && [ "$choice" -le ${#LAUNCHERS[@]} ]; then
+          kept=()
+          i=0
+          for rule in "${LAUNCHERS[@]}"; do i=$((i + 1)); [ "$i" -eq "$choice" ] || kept+=("$rule"); done
+          LAUNCHERS=(${kept[@]+"${kept[@]}"})
+          CHANGED=true
+        else
+          ui_fail "no launcher $choice"
+        fi ;;
+    esac
+  done
+}
+
+config_menu() {
+  local choice count answer keys
+  [ -t 0 ] || die "the settings menu needs a terminal; edit $CONFIG_FILE directly or run claude-grid config --edit"
+  keys=($SETTING_KEYS)
+  count=${#keys[@]}
+  while true; do
+    print_menu
+    read -r -p "  Number to change, s to save, q to quit: " choice || choice=q
+    case "$choice" in
+      s | S)
+        write_config
+        write_generated
+        echo
+        ui_ok "saved $CONFIG_FILE"
+        if [ -n "$(grid_names)" ]; then
+          refresh_running_grids
+          ui_ok "running grids now use the new settings"
+        fi
+        echo
+        return 0 ;;
+      q | Q)
+        if $CHANGED; then
+          read -r -p "  Discard your changes? [y/N] " answer || answer=y
+          case "$answer" in y | Y) return 0 ;; esac
+        else
+          return 0
+        fi ;;
+      *)
+        if [[ "$choice" =~ ^[0-9]+$ ]] && [ "$choice" -ge 1 ] && [ "$choice" -le "$count" ]; then
+          edit_setting "${keys[$((choice - 1))]}"
+        elif [ "$choice" = $((count + 1)) ]; then
+          edit_launchers
+        else
+          MENU_MESSAGE="$(ui_fail "pick 1-$((count + 1)), s or q")"
+        fi ;;
+    esac
+  done
+}
+
+cmd_config() {
+  case "${1:-}" in
+    --edit)
+      if [ ! -f "$CONFIG_FILE" ]; then
+        mkdir -p "$CONFIG_DIR"
+        cp "$LIBEXEC/config.example" "$CONFIG_FILE"
+      fi
+      exec ${VISUAL:-${EDITOR:-vi}} "$CONFIG_FILE" ;;
+    '')
+      load_config
+      config_menu ;;
+    *) die "unknown config option: $1 (use claude-grid config or claude-grid config --edit)" ;;
+  esac
+}
+
+# ---- Doctor -------------------------------------------------------------------
+
+cmd_doctor() {
+  local failed=0 msg claude_bin bin_dir
+  if msg="$( (load_config) 2>&1)"; then load_config; fi
+  banner "doctor"
+
+  ui_header "Requirements"
+  if ! command -v tmux >/dev/null; then
+    ui_fail "tmux not found; install tmux 3.8 or newer"; failed=1
+  elif msg="$(check_tmux 2>&1)"; then
+    ui_ok "$(tmux -V) $(ui_dim "($(command -v tmux))")"
+  else
+    ui_fail "${msg#claude-grid: }"; failed=1
+  fi
+  claude_bin="${CLAUDE_COMMAND%% *}"
+  if command -v "$claude_bin" >/dev/null; then
+    ui_ok "$claude_bin $(ui_dim "($(command -v "$claude_bin"))")"
+  else
+    ui_fail "$claude_bin not found on PATH (CLAUDE_COMMAND is \"$CLAUDE_COMMAND\")"; failed=1
+  fi
+  if command -v jq >/dev/null; then
+    ui_ok "jq $(ui_dim "($(command -v jq))")"
+  else
+    ui_note "jq not found; question prompts are detected with a simpler text match"
+  fi
+  ui_ok "bash $BASH_VERSION"
+
+  ui_header "Install"
+  ui_ok "claude-grid $VERSION $(ui_dim "($SELF)")"
+  if [ -f "$LIBEXEC/tmux.conf" ] && [ -x "$LIBEXEC/state.sh" ] && [ -x "$LIBEXEC/float.sh" ] && [ -x "$LIBEXEC/next-waiting.sh" ]; then
+    ui_ok "support files $(ui_dim "($LIBEXEC)")"
+  else
+    ui_fail "support files missing or not executable in $LIBEXEC; reinstall with install.sh"; failed=1
+  fi
+  bin_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+  case ":$PATH:" in
+    *":$bin_dir:"*) ui_ok "$bin_dir is on PATH" ;;
+    *) ui_warn "$bin_dir is not on PATH" ;;
+  esac
+
+  ui_header "Settings"
+  if msg="$( (load_config) 2>&1)"; then
+    if [ -f "$CONFIG_FILE" ]; then ui_ok "$CONFIG_FILE"; else ui_ok "defaults $(ui_dim "($CONFIG_FILE not created)")"; fi
+    ui_ok "theme $THEME"
+  else
+    ui_fail "${msg#claude-grid: }"; failed=1
+  fi
+  [ ! -f "$CONFIG_DIR/tmux.local.conf" ] || ui_note "tmux overrides: $CONFIG_DIR/tmux.local.conf"
+
+  ui_header "Grids"
+  msg="$(grid_names)"
+  if [ -n "$msg" ]; then ui_ok "running: $(echo $msg)"; else ui_note "none running"; fi
+  echo
+  return "$failed"
+}
+
+# ---- Main -----------------------------------------------------------------------
+
+case "${1:-}" in
+  -h | --help | help) load_config 2>/dev/null || true; usage; exit 0 ;;
+  --version | version) echo "claude-grid $VERSION"; exit 0 ;;
+  colors) load_config; show_colors; exit 0 ;;
+  themes) load_config; cmd_themes; exit 0 ;;
+  config) shift; cmd_config "$@"; exit 0 ;;
+  doctor) cmd_doctor; exit ;;
+  ls) cmd_ls; exit 0 ;;
+  kill) shift; cmd_kill "$@"; exit 0 ;;
+  attach) shift; load_config; check_tmux; write_generated; cmd_attach "$@"; exit 0 ;;
+esac
+
+load_config
+check_tmux
+
+if [ -n "${TMUX:-}" ] && [ -z "$(current_grid)" ]; then
+  die "inside another tmux session; open a new terminal window and run claude-grid there"
+fi
+
+dirs=()
+while [ $# -gt 0 ]; do
+  case "$1" in
+    --model)
+      [ -n "${2:-}" ] || die "--model needs a model name, e.g. --model opus"
+      MODEL="$2"
+      shift 2 ;;
+    --model=*)
+      MODEL="${1#--model=}"
+      [ -n "$MODEL" ] || die "--model needs a model name, e.g. --model opus"
+      shift ;;
+    --grid | -g)
+      [ -n "${2:-}" ] || die "$1 needs a grid name"
+      GRID="$2"
+      shift 2 ;;
+    --grid=*)
+      GRID="${1#--grid=}"
+      shift ;;
+    -n)
+      re='^[1-9][0-9]*$'
+      [[ "${2:-}" =~ $re ]] || die "-n needs a positive number"
+      for _ in $(seq "$2"); do dirs+=("$PWD"); done
+      shift 2 ;;
+    -*)
+      die "unknown option: $1 (see claude-grid -h)" ;;
+    *)
+      re='^(.+):([1-9][0-9]*)$'
+      if [ -d "$1" ]; then
+        dirs+=("$1")
+      elif [[ "$1" =~ $re ]] && [ -d "${BASH_REMATCH[1]}" ]; then
+        for _ in $(seq "${BASH_REMATCH[2]}"); do dirs+=("${BASH_REMATCH[1]}"); done
+      else
+        die "not a directory: $1"
+      fi
+      shift ;;
+  esac
+done
+
+[ -n "$GRID" ] || GRID="$(current_grid)"
+[ -n "$GRID" ] || GRID="$(pick_grid)"
+valid_grid_name "$GRID" || die "grid names use letters, digits, - and _ (got $GRID)"
+
+write_generated
+
+fresh=false
+if grid_running "$GRID"; then
+  t source-file "$STATE_DIR/grid.conf"
+else
+  fresh=true
+  [ ${#dirs[@]} -gt 0 ] || dirs=("$PWD")
+fi
+
+for dir in ${dirs[@]+"${dirs[@]}"}; do
+  add_pane "$dir"
+done
+
+t select-layout -t "$SESSION" tiled
+$fresh || float_sh restyle
+if $fresh && $START_FLOATING; then float_sh focus; fi
+attach

@@ -1,0 +1,8 @@
+# Gruvbox dark: warm orange and muted blue.
+# Needs-input stays orange or yellow and the focused pane blue, a pair red-green color-blind
+# users can tell apart.
+COLOR_WAITING=#FE8019
+COLOR_ACTIVE=#83A598
+COLOR_BORDER=#3C3836
+COLOR_TEXT=#EBDBB2
+COLOR_STATUS=#282828

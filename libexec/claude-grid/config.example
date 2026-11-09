@@ -1,0 +1,45 @@
+# claude-grid settings: ~/.config/claude-grid/config
+#
+# Every setting is shown commented out with its default. Uncomment a line to change it.
+# One KEY=value per line; comments go on their own line. The file is read, never executed.
+# `claude-grid config` opens a menu that edits this file for you (it rewrites the file, so
+# comments are not kept). A running grid picks up changes the next time you run claude-grid.
+
+# Chord prefix, as a tmux key name: C-Space, C-a, M-Space, C-b ...
+#PREFIX=C-Space
+
+# true: the first pane floats as soon as a grid opens
+#START_FLOATING=false
+
+# on: switching to a pane floats it over the grid (toggle live: PREFIX F)
+#AUTO_FLOAT=on
+
+# Floating pane size, % of the window
+#FLOAT_WIDTH=80
+#FLOAT_HEIGHT=78
+
+# How much to fade the grid behind a floating pane, 0-90 % (0 = off)
+#FADE=55
+
+# After switching panes, Enter / arrows / 1-9 stay tmux keys this long
+#SWITCH_GRACE_MS=800
+
+# Color theme: default, catppuccin, gruvbox, light, nord, solarized, tokyo-night,
+# or your own ~/.config/claude-grid/themes/NAME.theme. Preview them: claude-grid themes
+#THEME=default
+
+# Single colors, #RRGGBB. Each one overrides the theme's value.
+#COLOR_WAITING=#E69F00
+#COLOR_ACTIVE=#56B4E9
+#COLOR_BORDER=#3a3a3a
+#COLOR_TEXT=#d0d0d0
+#COLOR_STATUS=#262626
+
+# What each pane runs; add flags here, e.g. claude --model opus
+#CLAUDE_COMMAND=claude
+
+# Folders whose Claude starts through a project launcher instead of CLAUDE_COMMAND.
+# One line per rule: launcher=folder-glob|command. The first matching rule wins.
+# claude-grid passes its hook flags in $CLAUDE_EXTRA_ARGS; the launcher must hand them to
+# claude (e.g. `claude ${CLAUDE_EXTRA_ARGS:-}`) or that pane works but never shows NEEDS INPUT.
+#launcher=*/my_project|mise run claude

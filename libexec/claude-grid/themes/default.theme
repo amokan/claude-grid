@@ -1,0 +1,8 @@
+# Okabe-Ito orange and sky blue on dark gray (the default).
+# Needs-input stays orange or yellow and the focused pane blue, a pair red-green color-blind
+# users can tell apart.
+COLOR_WAITING=#E69F00
+COLOR_ACTIVE=#56B4E9
+COLOR_BORDER=#3a3a3a
+COLOR_TEXT=#d0d0d0
+COLOR_STATUS=#262626

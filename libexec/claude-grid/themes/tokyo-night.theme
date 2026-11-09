@@ -1,0 +1,8 @@
+# Tokyo Night: orange and blue on deep navy.
+# Needs-input stays orange or yellow and the focused pane blue, a pair red-green color-blind
+# users can tell apart.
+COLOR_WAITING=#FF9E64
+COLOR_ACTIVE=#7AA2F7
+COLOR_BORDER=#292E42
+COLOR_TEXT=#C0CAF5
+COLOR_STATUS=#1A1B26

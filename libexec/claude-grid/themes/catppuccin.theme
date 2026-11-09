@@ -1,0 +1,8 @@
+# Catppuccin Mocha: peach and blue on base.
+# Needs-input stays orange or yellow and the focused pane blue, a pair red-green color-blind
+# users can tell apart.
+COLOR_WAITING=#FAB387
+COLOR_ACTIVE=#89B4FA
+COLOR_BORDER=#313244
+COLOR_TEXT=#CDD6F4
+COLOR_STATUS=#1E1E2E

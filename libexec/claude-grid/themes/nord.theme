@@ -1,0 +1,8 @@
+# Nord: frost blue and aurora yellow on polar night.
+# Needs-input stays orange or yellow and the focused pane blue, a pair red-green color-blind
+# users can tell apart.
+COLOR_WAITING=#EBCB8B
+COLOR_ACTIVE=#88C0D0
+COLOR_BORDER=#3B4252
+COLOR_TEXT=#D8DEE9
+COLOR_STATUS=#2E3440
