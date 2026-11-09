@@ -28,8 +28,8 @@ anything about how you work today if you're an existing tmux user.
 - **Your Claude Code settings are never changed.** The hooks that report each session's state
   are passed to each pane with `claude --settings`, which adds settings for that session only.
   `~/.claude/settings.json` and your project settings stay as they are.
-- **Nothing goes in your shell rc files.** The installer adds one command to `~/.local/bin` (and
-  an optional short alias), and `./install.sh --uninstall` removes it.
+- **Nothing goes in your shell rc files.** The installer adds one command to `~/.local/bin` (plus a
+  second name, if you ask for one with `--alias`), and `./install.sh --uninstall` removes it.
 
 The only files claude-grid writes:
 
@@ -57,15 +57,14 @@ cd claude-grid
 ./install.sh
 ```
 
-The installer checks the requirements, links `~/.local/bin/claude-grid` to the checkout, offers
-the short alias `mc` if no other command uses that name, and offers to open the settings menu.
+The installer checks the requirements, links `~/.local/bin/claude-grid` to the checkout, and
+offers to open the settings menu.
 
 | Option | Effect |
 |---|---|
 | `--copy` | copy the files instead of linking, so the checkout can be moved or deleted |
 | `--prefix DIR` | install under `DIR` instead of `~/.local` |
-| `--alias NAME` | use a different short alias (only if nothing on PATH uses `NAME`) |
-| `--no-alias` | skip the short alias |
+| `--alias NAME` | also install claude-grid under a second, shorter name, if no command on PATH uses it (a shell alias or function with that name still takes precedence) |
 | `-y` | accept the defaults without asking |
 | `--uninstall` | remove claude-grid (your settings stay in `~/.config/claude-grid`) |
 

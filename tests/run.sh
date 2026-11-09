@@ -290,14 +290,14 @@ write_config
 
 section "Install"
 prefix="$WORK/prefix"
-expect "installs a link" "$prefix/bin/claude-grid → $REPO/bin/claude-grid" "$BASH_BIN" "$REPO/install.sh" --prefix "$prefix" -y --no-alias
+expect "installs a link" "$prefix/bin/claude-grid → $REPO/bin/claude-grid" "$BASH_BIN" "$REPO/install.sh" --prefix "$prefix" -y
 expect "the installed command runs" '^claude-grid [0-9]' "$prefix/bin/claude-grid" --version
 expect "installs a free alias" 'alias cgtest → claude-grid' "$BASH_BIN" "$REPO/install.sh" --prefix "$prefix" -y --alias cgtest
 expect "the alias runs" '^claude-grid [0-9]' "$prefix/bin/cgtest" --version
 expect "skips an alias that's taken" 'already uses the name sh' "$BASH_BIN" "$REPO/install.sh" --prefix "$prefix" -y --alias sh
-expect "copy mode copies the support files" "$prefix/libexec/claude-grid" "$BASH_BIN" "$REPO/install.sh" --copy --prefix "$prefix" -y --no-alias
+expect "copy mode copies the support files" "$prefix/libexec/claude-grid" "$BASH_BIN" "$REPO/install.sh" --copy --prefix "$prefix" -y
 expect "the copy finds its own support files" "support files \(.*/prefix/libexec/claude-grid\)" "$prefix/bin/claude-grid" doctor
-expect "back to link mode removes the copy" 'removed the old copied files' "$BASH_BIN" "$REPO/install.sh" --prefix "$prefix" -y --no-alias
+expect "back to link mode removes the copy" 'removed the old copied files' "$BASH_BIN" "$REPO/install.sh" --prefix "$prefix" -y
 expect "uninstall removes the alias" "removed alias $prefix/bin/cgtest" "$BASH_BIN" "$REPO/install.sh" --uninstall --prefix "$prefix"
 check "uninstall removes the command" test ! -e "$prefix/bin/claude-grid"
 check "uninstall keeps the settings" test -f "$CONFIG"

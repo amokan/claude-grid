@@ -14,7 +14,6 @@ PREFIX="$HOME/.local"
 MODE=symlink
 ACTION=install
 ALIAS=""
-ALIAS_CHOICE=ask
 OFFER_CONFIG=true
 ASSUME_YES=false
 FORCE=false
@@ -26,8 +25,7 @@ Usage: ./install.sh [options]
   (no options)      link PREFIX/bin/claude-grid to this checkout, so \`git pull\` upgrades it
   --copy            copy the files instead, so the checkout can be moved or deleted
   --prefix DIR      install under DIR instead of ~/.local (the command goes in DIR/bin)
-  --alias NAME      also install a short alias, if nothing on PATH uses NAME yet
-  --no-alias        don't offer the short alias (mc)
+  --alias NAME      also install claude-grid under a second name, if nothing on PATH uses it
   --no-config       don't offer the settings menu at the end
   --uninstall       remove claude-grid from PREFIX (your settings stay)
   --force           replace a PREFIX/bin/claude-grid that this script didn't install
@@ -46,9 +44,8 @@ while [ $# -gt 0 ]; do
     --prefix=*) PREFIX="${1#--prefix=}" ;;
     --alias)
       [ -n "${2:-}" ] || die "--alias needs a name"
-      ALIAS="$2"; ALIAS_CHOICE=yes; shift ;;
-    --alias=*) ALIAS="${1#--alias=}"; ALIAS_CHOICE=yes ;;
-    --no-alias) ALIAS_CHOICE=no ;;
+      ALIAS="$2"; shift ;;
+    --alias=*) ALIAS="${1#--alias=}" ;;
     --no-config) OFFER_CONFIG=false ;;
     --uninstall) ACTION=uninstall ;;
     --force) FORCE=true ;;
@@ -127,9 +124,10 @@ install_files() {
   fi
 }
 
+# Installs the --alias name: a link to claude-grid next to it, only if no command uses the name.
 install_alias() {
-  local name="${ALIAS:-mc}" existing re='^[A-Za-z0-9._-]+$'
-  [ "$ALIAS_CHOICE" != no ] || return 0
+  local name="$ALIAS" existing re='^[A-Za-z0-9._-]+$'
+  [ -n "$name" ] || return 0
   [[ "$name" =~ $re ]] && [ "$name" != claude-grid ] || die "not a usable alias name: $name"
   if is_our_alias "$BIN_DIR/$name"; then
     ui_ok "alias $name already installed"
@@ -137,14 +135,12 @@ install_alias() {
   fi
   existing="$(type -P "$name" 2>/dev/null || true)"
   if [ -n "$existing" ] || [ -e "$BIN_DIR/$name" ]; then
-    ui_note "skipped the short alias: ${existing:-$BIN_DIR/$name} already uses the name $name"
-    [ -n "$ALIAS" ] || ui_note "pick another with ./install.sh --alias NAME"
+    ui_warn "skipped the alias: ${existing:-$BIN_DIR/$name} already uses the name $name"
     return 0
   fi
-  if [ "$ALIAS_CHOICE" = yes ] || ask "Also install the short alias '$name'?" y; then
-    ln -s claude-grid "$BIN_DIR/$name"
-    ui_ok "alias $name → claude-grid"
-  fi
+  ln -s claude-grid "$BIN_DIR/$name"
+  ui_ok "alias $name → claude-grid"
+  ui_note "a shell alias or function named $name, if you have one, still takes precedence"
 }
 
 check_path() {
