@@ -1,0 +1,12 @@
+.DS_Store
+
+# Editor / IDE metadata
+.vscode/
+.idea/
+.cursor/
+*.swp
+
+# Local Claude Code settings (user-specific)
+.claude/settings.local.json
+
+!CLAUDE.md
