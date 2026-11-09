@@ -51,4 +51,6 @@
 # One line per rule: launcher=folder-glob|command. The first matching rule wins.
 # claude-grid passes its hook flags in $CLAUDE_EXTRA_ARGS; the launcher must hand them to
 # claude (e.g. `claude ${CLAUDE_EXTRA_ARGS:-}`) or that pane works but never shows NEEDS INPUT.
-#launcher=*/my_project|mise run claude
+# Match your checkout by its path (a leading ~/ is your home folder): a name-only glob like
+# */my_project would also match someone else's repository with that name, and run its files.
+#launcher=~/code/my_project|mise run claude

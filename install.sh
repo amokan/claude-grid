@@ -6,7 +6,7 @@
 
 set -euo pipefail
 
-REPO="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+REPO="$(cd -P "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 # shellcheck source=libexec/claude-grid/ui.sh
 . "$REPO/libexec/claude-grid/ui.sh"
 
@@ -57,6 +57,16 @@ while [ $# -gt 0 ]; do
 done
 
 PREFIX="${PREFIX%/}"
+case "$PREFIX" in
+  /*) ;;
+  *) die "--prefix needs an absolute path (got $PREFIX)" ;;
+esac
+# Installing into the checkout itself would replace its files with links to themselves.
+if [ -d "$PREFIX" ]; then
+  case "$(cd -P "$PREFIX" && pwd)/" in
+    "$REPO"/*) die "--prefix can't be inside this checkout ($REPO)" ;;
+  esac
+fi
 BIN_DIR="$PREFIX/bin"
 LIBEXEC_DIR="$PREFIX/libexec/claude-grid"
 CONFIG_DIR="${XDG_CONFIG_HOME:-$HOME/.config}/claude-grid"
@@ -155,7 +165,8 @@ check_path() {
 uninstall() {
   local link removed=false
   ui_header "Uninstall"
-  if [ -x "$BIN_DIR/claude-grid" ] && [ -n "$("$BIN_DIR/claude-grid" ls 2>/dev/null | grep -v 'no grid running' || true)" ]; then
+  if is_ours "$BIN_DIR/claude-grid" && [ -x "$BIN_DIR/claude-grid" ] &&
+    [ -n "$("$BIN_DIR/claude-grid" ls 2>/dev/null | grep -v 'no grid running' || true)" ]; then
     ui_warn "grids are still running; they keep running until you end them (claude-grid kill --all first)"
   fi
   for link in "$BIN_DIR"/*; do

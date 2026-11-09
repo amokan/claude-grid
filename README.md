@@ -323,25 +323,30 @@ Some projects start Claude through their own command, for example to load secret
 `CLAUDE_COMMAND`. Add one in `claude-grid config` (the `LAUNCHERS` item), with one command:
 
 ```sh
-claude-grid config add-launcher '*/my_project' 'mise run claude'
-claude-grid config remove-launcher '*/my_project'     # and to remove it again
+claude-grid config add-launcher '~/code/my_project' 'mise run claude'
+claude-grid config remove-launcher '~/code/my_project'     # and to remove it again
 ```
 
 or as a line in the config file:
 
 ```
-launcher=*/my_project|mise run claude
+launcher=~/code/my_project|mise run claude
 ```
 
-Quote both parts of `add-launcher`, so your shell leaves the `*` alone.
+Quote both parts of `add-launcher`, so your shell leaves `~` and `*` alone.
 
 The part before `|` is a glob, matched against the pane folder's full path:
 
-- `*/my_project` matches any folder named exactly `my_project`, but not its subfolders. Add a
-  second rule with `*/my_project/*` to cover those too.
-- Write the start of the path as `*` or spell it out in full: `~` isn't expanded, so
-  `~/code/my_project` never matches.
+- `~/code/my_project` matches that one folder; a leading `~/` means your home folder.
+- `~/code/my_project/*` matches its subfolders too. Add it as a second rule if you want both.
+- `*/my_project` matches **any** folder named `my_project`, wherever it is.
 - With several rules, the first match wins.
+
+**Match your own checkout by its path, not just its name.** The launcher runs in the matching
+folder, so a command such as `./bin/claude` or `mise run claude` uses whatever that folder
+contains, before Claude Code's trust prompt appears. With a name-only rule like `*/my_project`,
+cloning someone else's repository that happens to be called `my_project` would run *their*
+`bin/claude`.
 
 The command runs in the pane's folder. claude-grid passes the flags it would have given
 `claude` in `$CLAUDE_EXTRA_ARGS`: the `--settings` file with the hooks that report the pane's
@@ -355,7 +360,7 @@ set -a; . ./.env; set +a
 exec claude ${CLAUDE_EXTRA_ARGS:-}
 ```
 
-with `launcher=*/my_project|./bin/claude`. A launcher that drops `$CLAUDE_EXTRA_ARGS` still
+with `launcher=~/code/my_project|./bin/claude`. A launcher that drops `$CLAUDE_EXTRA_ARGS` still
 starts Claude, but that pane never shows NEEDS INPUT, and `--model` and the flags after `--`
 don't reach it.
 

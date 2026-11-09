@@ -318,17 +318,47 @@ expect "set THEME keeps color overrides" 'kept your color overrides: COLOR_ACTIV
 expect "unset puts a setting back" 'FADE = 55 \(the default\)' cg config unset FADE
 check "and removes it from the file" sh -c "! grep -q '^FADE=' '$CONFIG'"
 expect "unset of a color goes back to the theme's value" 'COLOR_ACTIVE = #88C0D0' cg config unset COLOR_ACTIVE
-expect "add-launcher adds a rule" 'launcher \*/logs_harness → mise run claude' cg config add-launcher '*/logs_harness' 'mise run claude'
-expect "and saves it" '^launcher=\*/logs_harness\|mise run claude$' cat "$CONFIG"
-expect "adding the same rule again is a no-op" 'already set' cg config add-launcher '*/logs_harness' 'mise run claude'
+expect "add-launcher adds a rule" 'launcher \*/my_project → mise run claude' cg config add-launcher '*/my_project' 'mise run claude'
+expect "and saves it" '^launcher=\*/my_project\|mise run claude$' cat "$CONFIG"
+expect "adding the same rule again is a no-op" 'already set' cg config add-launcher '*/my_project' 'mise run claude'
 expect "add-launcher rejects | in the glob" "can't contain \|" cg config add-launcher '*/a|b' 'x'
 expect "add-launcher needs both parts" 'usage: claude-grid config add-launcher' cg config add-launcher '*/a'
-expect "show lists changed settings and launchers" 'launcher +\*/logs_harness → mise run claude' cg config show
+expect "show lists changed settings and launchers" 'launcher +\*/my_project → mise run claude' cg config show
 expect "show marks changed settings" '^\* THEME +nord$' cg config show
-expect "remove-launcher removes the rule" 'removed launcher \*/logs_harness' cg config remove-launcher '*/logs_harness'
+expect "remove-launcher removes the rule" 'removed launcher \*/my_project' cg config remove-launcher '*/my_project'
 check "and it's gone from the file" sh -c "! grep -q '^launcher=' '$CONFIG'"
 expect "remove-launcher of a missing rule fails" 'no launcher for \*/nope' cg config remove-launcher '*/nope'
 expect "unknown config commands are refused" 'unknown config command: bogus' cg config bogus
+write_config
+
+section "Hostile names and values"
+mkdir -p "$WORK/proj/x#{session_name}y"
+(cd "$WORK/proj" && cg --grid hash 'x#{session_name}y' >/dev/null 2>&1)
+expect "a # in a folder name isn't expanded by tmux" '/x#\{session_name\}y$' tg hash display -p -t claude '#{pane_current_path}'
+tg hash kill-server
+tg main select-pane -t "$pane" -T '#[fg=red bg=#E69F00] fake NEEDS INPUT'
+check "a pane title can't restyle the border" sh -c "! tmux -L claude-grid-main display -p -t '$pane' '#{E:pane-border-format}' | grep -q '#\[fg=red'"
+expect "the title still shows, without its styling" '\[fg=red bg=#E69F00\] fake NEEDS INPUT' tg main display -p -t "$pane" '#{E:pane-border-format}'
+tg main select-pane -t "$pane" -T 'claude'
+odd="$WORK/c#Tdir"
+mkdir -p "$odd"
+cp -R "$REPO/bin" "$REPO/libexec" "$odd/"
+write_config "START_FLOATING=true"
+(cd "$WORK/proj" && "$BASH_BIN" "$odd/bin/claude-grid" --grid oddpath a b >/dev/null 2>&1)
+expect "an install path with # still runs float.sh" '1' sh -c "tmux -L claude-grid-oddpath list-panes -t claude -F '#{pane_floating_flag}' | sort -r | head -n 1"
+tg oddpath kill-server
+write_config
+expect "set refuses a line break in a value" "can't contain line breaks" cg config set "MINIMAL_STATUS_COMMAND=x
+launcher=*|y"
+expect "add-launcher refuses a line break" "can't contain line breaks" cg config add-launcher '*/a' "x
+launcher=*|y"
+check "neither one wrote anything" sh -c "! grep -q '^launcher=' '$CONFIG'"
+mkdir -p "$WORK/home/code/tilde"
+write_config "launcher=~/code/tilde|$WORK/bin/launcher"
+rm -f "$WORK"/launcher.*
+(cd "$WORK" && env HOME="$WORK/home" "$BASH_BIN" "$REPO/bin/claude-grid" --grid tilde "$WORK/home/code/tilde" >/dev/null 2>&1)
+check "a launcher glob starting with ~/ matches under the home folder" wait_for sh -c "ls '$WORK'/launcher.* >/dev/null 2>&1"
+tg tilde kill-server
 write_config
 
 section "Install"
@@ -344,8 +374,18 @@ expect "back to link mode removes the copy" 'removed the old copied files' "$BAS
 expect "uninstall removes the alias" "removed alias $prefix/bin/cgtest" "$BASH_BIN" "$REPO/install.sh" --uninstall --prefix "$prefix"
 check "uninstall removes the command" test ! -e "$prefix/bin/claude-grid"
 check "uninstall keeps the settings" test -f "$CONFIG"
-printf '#!/bin/sh\n' >"$prefix/bin/claude-grid"
+printf '#!/bin/sh\ntouch "%s/ran"\n' "$WORK" >"$prefix/bin/claude-grid"
+chmod +x "$prefix/bin/claude-grid"
 expect "won't replace a claude-grid it didn't install" "isn't claude-grid" "$BASH_BIN" "$REPO/install.sh" --prefix "$prefix" -y
+expect "won't uninstall it either" "isn't claude-grid" "$BASH_BIN" "$REPO/install.sh" --uninstall --prefix "$prefix"
+check "and never runs it" test ! -e "$WORK/ran"
+# From the work folder, so a broken check can only install there.
+expect "refuses a relative --prefix" 'needs an absolute path' sh -c "cd '$WORK' && '$BASH_BIN' '$REPO/install.sh' --prefix relative/dir -y"
+copy="$WORK/checkout"
+mkdir -p "$copy"
+cp -R "$REPO/bin" "$REPO/libexec" "$REPO/install.sh" "$copy/"
+expect "refuses a --prefix inside the checkout" "can't be inside this checkout" "$BASH_BIN" "$copy/install.sh" --prefix "$copy" -y
+check "and leaves the checkout's files alone" sh -c "[ -f '$copy/bin/claude-grid' ] && [ ! -L '$copy/bin/claude-grid' ] && [ -f '$copy/libexec/claude-grid/tmux.conf' ]"
 
 printf '\n%d passed, %d failed\n' "$PASSED" "$FAILED"
 [ "$FAILED" -eq 0 ]

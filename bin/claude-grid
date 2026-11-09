@@ -98,6 +98,8 @@ join_words() { tr '\n' ' ' | sed 's/ *$//'; }
 # Prints why a value is invalid and fails, or succeeds silently.
 validate_setting() {
   local key="$1" value="$2" re
+  # A line break would add lines to the config file, and breaks the generated JSON.
+  [[ "$value" != *[[:cntrl:]]* ]] || { echo "can't contain line breaks or other control characters"; return 1; }
   case "$key" in
     PREFIX)
       [ -n "$value" ] && [[ "$value" != *[[:space:]]* ]] || { echo "must be a tmux key name such as C-Space"; return 1; } ;;
@@ -126,6 +128,7 @@ validate_setting() {
 
 # Prints why a launcher rule is invalid and fails, or succeeds silently.
 validate_launcher() {
+  [[ "$1" != *[[:cntrl:]]* ]] || { echo "can't contain line breaks or other control characters"; return 1; }
   [[ "$1" == ?*'|'?* ]] || { echo "must look like folder-glob|command"; return 1; }
 }
 
@@ -403,12 +406,18 @@ check_claude_arg() {
   return 1
 }
 
-# The launcher command for a folder, if a launcher rule matches it.
+# The launcher command for a folder, if a launcher rule matches it. A glob starting with ~/
+# is relative to the home folder.
 launcher_for() {
-  local rule
+  local rule glob home
+  # The same normalized form as the folder being matched, e.g. without a trailing slash.
+  home="$(cd "$HOME" 2>/dev/null && pwd || echo "${HOME%/}")"
   for rule in ${LAUNCHERS[@]+"${LAUNCHERS[@]}"}; do
+    glob="${rule%%|*}"
+    # shellcheck disable=SC2088 # matching a literal ~ on purpose
+    case "$glob" in "~/"*) glob="$home/${glob#"~/"}" ;; esac
     # shellcheck disable=SC2053 # the folder part is a glob on purpose
-    if [[ "$1" == ${rule%%|*} ]]; then
+    if [[ "$1" == $glob ]]; then
       echo "${rule#*|}"
       return 0
     fi
@@ -506,21 +515,23 @@ term_size() {
   if [ "$1" = rows ]; then echo "$rows"; else echo "$cols"; fi
 }
 
+# tmux expands formats like #{...} in a start folder, so a # in the path is doubled.
 add_pane() {
   local dir pane
   dir="$(cd "$1" && pwd)"
   if grid_running "$GRID"; then
-    pane="$(t split-window -d -t "$(tiled_pane)" -c "$dir" -P -F '#{pane_id}' "$(claude_cmd "$dir")")"
+    pane="$(t split-window -d -t "$(tiled_pane)" -c "${dir//#/##}" -P -F '#{pane_id}' "$(claude_cmd "$dir")")"
     t select-layout -t "$SESSION" tiled
   else
-    pane="$(t new-session -d -s "$SESSION" -c "$dir" -x "$(term_size cols)" -y "$(term_size rows)" -P -F '#{pane_id}' "$(claude_cmd "$dir")")"
+    pane="$(t new-session -d -s "$SESSION" -c "${dir//#/##}" -x "$(term_size cols)" -y "$(term_size rows)" -P -F '#{pane_id}' "$(claude_cmd "$dir")")"
     t set -g @cg_grid "$GRID"
     t set -g @cg_autofloat "$AUTO_FLOAT"
   fi
   t set -p -t "$pane" @claude_name "$(basename "$dir")"
 }
 
-float_sh() { t run-shell -t "$SESSION" "$(printf '%q' "$LIBEXEC/float.sh") $1 $(t display -p -t "$SESSION" '#{pane_id}')"; }
+# run-shell expands formats, so the path goes in as #{q:...} rather than as text.
+float_sh() { t run-shell -t "$SESSION" "#{q:@cg_libexec}/float.sh $1 $(t display -p -t "$SESSION" '#{pane_id}')"; }
 
 # Applies regenerated settings to every running grid.
 refresh_running_grids() {
@@ -570,7 +581,7 @@ ${b}Manage${r}
   claude-grid config          change settings in a menu (--edit opens the file in \$EDITOR)
     config set KEY=VALUE...   change settings without the menu, e.g. config set FADE=40 THEME=nord
     config unset KEY...       put settings back to their defaults
-    config add-launcher GLOB COMMAND     e.g. config add-launcher '*/my_project' 'mise run claude'
+    config add-launcher GLOB COMMAND     e.g. config add-launcher '~/code/my_project' 'mise run claude'
     config remove-launcher GLOB          remove the launcher rules for that folder glob
     config show               print the current settings and launchers
   claude-grid themes          preview the color themes
@@ -603,8 +614,8 @@ show_colors() {
   echo "  ${UI_BOLD}Theme: $THEME${UI_RESET}"
   echo
   swatch "$COLOR_WAITING" "0;0;0" "⚠ 3:api  NEEDS INPUT" "COLOR_WAITING  needs input"
-  swatch "$COLOR_ACTIVE" "0;0;0" "● 5:sink  working" "COLOR_ACTIVE   focused pane, tags"
-  swatch "$COLOR_BORDER" "$(ui_rgb "$COLOR_TEXT")" "✓ 4:mapper  done" "COLOR_BORDER   other panes"
+  swatch "$COLOR_ACTIVE" "0;0;0" "● 2:web  working" "COLOR_ACTIVE   focused pane, tags"
+  swatch "$COLOR_BORDER" "$(ui_rgb "$COLOR_TEXT")" "✓ 3:infra  done" "COLOR_BORDER   other panes"
   swatch "$COLOR_STATUS" "$(ui_rgb "$COLOR_TEXT")" "status bar" "COLOR_STATUS   status bar"
   echo
 }
@@ -806,7 +817,7 @@ edit_launchers() {
     case "$choice" in
       '') return 0 ;;
       a | A)
-        read -r -p "  Folder glob (e.g. */my_project): " glob || return 0
+        read -r -p "  Folder glob (e.g. ~/code/my_project): " glob || return 0
         read -r -p "  Command (e.g. mise run claude): " command || return 0
         glob="$(trim "$glob")"
         command="$(trim "$command")"
