@@ -89,7 +89,8 @@ Running `claude-grid DIR` while a grid is open adds panes to it.
 ### A shorter statusLine
 
 A multi-line Claude statusLine takes a lot of room in a small pane. `--minimal-status` gives
-the panes that run starts a one-line statusLine instead:
+the panes that run starts a one-line statusLine instead. Without `--minimal-status`, panes show
+your own statusLine, unchanged.
 
 ```
 api · main · Opus 5.5 high · 42% context · $1.23
@@ -97,7 +98,6 @@ api · main · Opus 5.5 high · 42% context · $1.23
 
 In a worktree session the folder shows the worktree's name, e.g. `api [bright-running-fox]`.
 The line needs jq to read what Claude sends it; without jq it shows only the folder and branch.
-Without `--minimal-status`, panes show your own statusLine, unchanged.
 
 To use your own short statusLine instead of claude-grid's, set `MINIMAL_STATUS_COMMAND` to
 its command (see [Settings](#settings)). It gets the same JSON on stdin as any
