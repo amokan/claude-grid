@@ -149,8 +149,9 @@ hook_with_path "$WORK/nojq" tool '{"session_id": "s", "tool_name": "ExitPlanMode
 expect "without jq: spaced JSON works too" '^waiting$' state_of
 
 section "Several grids"
-(sleep 60 | pty tmux -L claude-grid-main attach -t claude >/dev/null 2>&1 &)
-wait_for sh -c "[ \"\$(tmux -L claude-grid-main display -p -t claude '#{session_attached}')\" != 0 ]"
+# A second "terminal": tmux won't attach without a TERM, which CI runners don't set.
+(sleep 60 | TERM=xterm-256color pty tmux -L claude-grid-main attach -t claude >/dev/null 2>&1 &)
+check "a client attaches to main" wait_for sh -c "[ \"\$(tmux -L claude-grid-main display -p -t claude '#{session_attached}')\" != 0 ]"
 (cd "$WORK/proj/a" && cg >/dev/null 2>&1)
 check "a second terminal gets grid 2 while main is attached" tg 2 has-session -t claude
 (cd "$WORK/proj/a" && cg >/dev/null 2>&1)
