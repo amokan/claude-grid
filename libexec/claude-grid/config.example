@@ -38,6 +38,11 @@
 # What each pane runs; add flags here, e.g. claude --model opus
 #CLAUDE_COMMAND=claude
 
+# The statusLine for panes started with --minimal-status. Empty: claude-grid's one-liner
+# (folder · branch · model effort · context % · cost). Any statusLine command works, e.g.
+# ~/.claude/statusline-compact.sh; it gets the same JSON on stdin as any Claude statusLine.
+#MINIMAL_STATUS_COMMAND=
+
 # Folders whose Claude starts through a project launcher instead of CLAUDE_COMMAND.
 # One line per rule: launcher=folder-glob|command. The first matching rule wins.
 # claude-grid passes its hook flags in $CLAUDE_EXTRA_ARGS; the launcher must hand them to

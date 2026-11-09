@@ -37,7 +37,7 @@ readonly STATE_DIR="${XDG_STATE_HOME:-$HOME/.local/state}/claude-grid"
 # ---- Settings ---------------------------------------------------------------
 
 readonly COLOR_KEYS="COLOR_WAITING COLOR_ACTIVE COLOR_BORDER COLOR_TEXT COLOR_STATUS"
-readonly SETTING_KEYS="PREFIX START_FLOATING AUTO_FLOAT FLOAT_WIDTH FLOAT_HEIGHT FADE SWITCH_GRACE_MS THEME $COLOR_KEYS CLAUDE_COMMAND"
+readonly SETTING_KEYS="PREFIX START_FLOATING AUTO_FLOAT FLOAT_WIDTH FLOAT_HEIGHT FADE SWITCH_GRACE_MS THEME $COLOR_KEYS CLAUDE_COMMAND MINIMAL_STATUS_COMMAND"
 
 builtin_default() {
   case "$1" in
@@ -55,6 +55,7 @@ builtin_default() {
     COLOR_TEXT) echo "#d0d0d0" ;;
     COLOR_STATUS) echo "#262626" ;;
     CLAUDE_COMMAND) echo "claude" ;;
+    MINIMAL_STATUS_COMMAND) echo "" ;;
   esac
 }
 
@@ -82,6 +83,7 @@ describe() {
     COLOR_TEXT) echo "border and status text" ;;
     COLOR_STATUS) echo "status bar background" ;;
     CLAUDE_COMMAND) echo "what each pane runs; add flags here, e.g. claude --model opus" ;;
+    MINIMAL_STATUS_COMMAND) echo "statusLine command for panes started with --minimal-status (empty: claude-grid's one-liner)" ;;
   esac
 }
 
@@ -341,7 +343,16 @@ source-file -q $(tmux_quote "$CONFIG_DIR/tmux.local.conf")
 EOF
   mv "$tmp" "$STATE_DIR/grid.conf"
 
-  tmp="$(mktemp "$STATE_DIR/claude-hooks.json.XXXXXX")"
+  write_claude_settings claude-hooks.json
+  write_claude_settings claude-minimal-status.json "${MINIMAL_STATUS_COMMAND:-$(sh_quote "$LIBEXEC/statusline.sh") $(sh_quote "$COLOR_ACTIVE")}"
+}
+
+# Writes the settings passed to each pane's claude: the hooks that report its state, and for
+# --minimal-status a statusLine. Both have to be in one file, because a second --settings
+# replaces the first. Usage: write_claude_settings FILE [STATUSLINE-COMMAND]
+write_claude_settings() {
+  local file="$1" statusline="${2:-}" tmp
+  tmp="$(mktemp "$STATE_DIR/$file.XXXXXX")"
   {
     echo '{'
     echo '  "hooks": {'
@@ -352,16 +363,22 @@ EOF
     hook PermissionRequest waiting '*'; echo ','
     hook Notification waiting 'permission_prompt|elicitation_dialog'; echo ','
     hook Stop 'done'; echo
-    echo '  }'
+    if [ -n "$statusline" ]; then
+      echo '  },'
+      printf '  "statusLine": { "type": "command", "command": "%s" }\n' "$(json_escape "$statusline")"
+    else
+      echo '  }'
+    fi
     echo '}'
   } >"$tmp"
-  mv "$tmp" "$STATE_DIR/claude-hooks.json"
+  mv "$tmp" "$STATE_DIR/$file"
 }
 
 # ---- Grids --------------------------------------------------------------------
 
 GRID=""
 MODEL=""
+MINIMAL_STATUS=false
 # Flags after `--`, passed to claude in every pane this run starts.
 CLAUDE_ARGS=()
 
@@ -452,12 +469,14 @@ check_tmux() {
 }
 
 claude_cmd() {
-  local dir="$1" arg flags extra launch launcher
+  local dir="$1" arg settings flags extra launch launcher
+  settings="$STATE_DIR/claude-hooks.json"
+  ! $MINIMAL_STATUS || settings="$STATE_DIR/claude-minimal-status.json"
   # The flags for claude, quoted for the pane's shell ...
-  flags="--settings $(printf '%q' "$STATE_DIR/claude-hooks.json")"
+  flags="--settings $(printf '%q' "$settings")"
   # ... and the same flags for a launcher, which splits $CLAUDE_EXTRA_ARGS on spaces and
   # doesn't undo shell quoting.
-  extra="--settings $STATE_DIR/claude-hooks.json"
+  extra="--settings $settings"
   if [ -n "$MODEL" ]; then
     flags="$flags --model $(printf '%q' "$MODEL")"
     extra="$extra --model $MODEL"
@@ -466,9 +485,10 @@ claude_cmd() {
     flags="$flags $(printf '%q' "$arg")"
     extra="$extra $arg"
   done
-  launch="$CLAUDE_COMMAND $flags"
+  # CLAUDE_GRID names the grid, so the user's own statusLine or hooks can tell they run in one.
+  launch="CLAUDE_GRID=$GRID $CLAUDE_COMMAND $flags"
   if launcher="$(launcher_for "$dir")"; then
-    launch="CLAUDE_EXTRA_ARGS=$(printf '%q' "$extra") $launcher"
+    launch="CLAUDE_GRID=$GRID CLAUDE_EXTRA_ARGS=$(printf '%q' "$extra") $launcher"
   fi
   # shellcheck disable=SC2016 # $? and $s are for the pane's shell, not this one
   printf '%s || { s=$?; printf "\\n\\033[1mclaude-grid: claude launch exited with status %%s. Press Enter for a shell.\\033[0m " "$s"; read -r _; }; exec %q -l' \
@@ -537,6 +557,7 @@ ${b}Start${r}
   claude-grid -n N            N panes in the current directory
     --model NAME              start the new panes with this model (opus, sonnet, haiku or a model id)
     --grid NAME               use the grid named NAME (started if needed), even if attached elsewhere
+    --minimal-status          a one-line Claude statusLine in the new panes (see MINIMAL_STATUS_COMMAND)
     -- FLAGS...               pass the rest to claude in each new pane, e.g. -- --worktree --effort high
 
 ${b}Manage${r}
@@ -678,7 +699,7 @@ print_menu() {
     [ "$value" = "$(default_of "$key")" ] || mark="$(ui_fg "$COLOR_WAITING")*$UI_RESET"
     printf '  %2d %s %-16s ' "$i" "$mark" "$key"
     case "$key" in COLOR_*) printf '%s ' "$(ui_chip "$value")" ;; esac
-    printf '%s%s%s\n' "$UI_BOLD" "$value" "$UI_RESET"
+    if [ -n "$value" ]; then printf '%s%s%s\n' "$UI_BOLD" "$value" "$UI_RESET"; else ui_dim "$(empty_means "$key")"; echo; fi
   done
   i=$((i + 1))
   mark=" "
@@ -732,6 +753,9 @@ tmux_knows_key() {
   case "$out" in *"bad key"* | *"unknown key"*) return 1 ;; esac
 }
 
+# How the menu shows a setting that's empty.
+empty_means() { case "$1" in MINIMAL_STATUS_COMMAND) echo "(claude-grid's one-liner)" ;; *) echo "(empty)" ;; esac; }
+
 edit_setting() {
   local key="$1" value default msg
   [ "$key" != THEME ] || { edit_theme; return; }
@@ -739,7 +763,7 @@ edit_setting() {
   echo
   echo "  ${UI_BOLD}$key${UI_RESET}: $(describe "$key")"
   while true; do
-    read -r -p "  New value [${!key}] (Enter keeps it, - resets to $default): " value || return 0
+    read -r -p "  New value [${!key:-$(empty_means "$key")}] (Enter keeps it, - resets to ${default:-$(empty_means "$key")}): " value || return 0
     value="$(trim "$value")"
     [ -n "$value" ] || return 0
     [ "$value" != - ] || value="$default"
@@ -885,7 +909,7 @@ cmd_doctor() {
 
   ui_header "Install"
   ui_ok "claude-grid $VERSION $(ui_dim "($SELF)")"
-  if [ -f "$LIBEXEC/tmux.conf" ] && [ -x "$LIBEXEC/state.sh" ] && [ -x "$LIBEXEC/float.sh" ] && [ -x "$LIBEXEC/next-waiting.sh" ]; then
+  if [ -f "$LIBEXEC/tmux.conf" ] && [ -x "$LIBEXEC/state.sh" ] && [ -x "$LIBEXEC/float.sh" ] && [ -x "$LIBEXEC/next-waiting.sh" ] && [ -x "$LIBEXEC/statusline.sh" ]; then
     ui_ok "support files $(ui_dim "($LIBEXEC)")"
   else
     ui_fail "support files missing or not executable in $LIBEXEC; reinstall with install.sh"; failed=1
@@ -943,6 +967,9 @@ while [ $# -gt 0 ]; do
     --model=*)
       MODEL="${1#--model=}"
       [ -n "$MODEL" ] || die "--model needs a model name, e.g. --model opus"
+      shift ;;
+    --minimal-status)
+      MINIMAL_STATUS=true
       shift ;;
     --grid | -g)
       [ -n "${2:-}" ] || die "$1 needs a grid name"

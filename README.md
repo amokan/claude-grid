@@ -81,9 +81,37 @@ claude-grid ~/api ~/web           # one Claude pane per folder
 claude-grid ~/api:3 ~/web:2       # three panes in ~/api, two in ~/web
 claude-grid -n 4                  # four panes in the current folder
 claude-grid ~/api --model opus    # start the new panes on a specific model
+claude-grid ~/api:4 --minimal-status   # a one-line Claude statusLine in the new panes
 ```
 
 Running `claude-grid DIR` while a grid is open adds panes to it.
+
+### A shorter statusLine
+
+A multi-line Claude statusLine takes a lot of room in a small pane. `--minimal-status` gives
+the panes that run starts a one-line statusLine instead:
+
+```
+api · main · Opus 5.5 high · 42% context · $1.23
+```
+
+In a worktree session the folder shows the worktree's name, e.g. `api [bright-running-fox]`.
+The line needs jq to read what Claude sends it; without jq it shows only the folder and branch.
+Without `--minimal-status`, panes show your own statusLine, unchanged.
+
+To use your own short statusLine instead of claude-grid's, set `MINIMAL_STATUS_COMMAND` to
+its command (see [Settings](#settings)). It gets the same JSON on stdin as any
+[Claude statusLine](https://code.claude.com/docs/en/statusline).
+
+Every pane also has `CLAUDE_GRID` set to its grid's name, so your own statusLine script or
+hooks can tell they run in a grid, for example to print fewer lines:
+
+```sh
+if [ -n "${CLAUDE_GRID:-}" ]; then
+  echo "$branch · $model"   # inside claude-grid: one short line
+  exit 0
+fi
+```
 
 ### Passing flags to Claude
 
@@ -195,6 +223,7 @@ setting with its default.
 | `THEME` | `default` | color theme, see below |
 | `COLOR_WAITING`, `COLOR_ACTIVE`, `COLOR_BORDER`, `COLOR_TEXT`, `COLOR_STATUS` | from the theme | single colors, `#RRGGBB`; each overrides the theme |
 | `CLAUDE_COMMAND` | `claude` | what each pane runs; add flags here, e.g. `claude --model opus` |
+| `MINIMAL_STATUS_COMMAND` | empty | the statusLine command for `--minimal-status` panes; empty uses claude-grid's one-liner |
 | `launcher=` | none | see [Project launchers](#project-launchers) |
 
 ### Themes

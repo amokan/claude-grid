@@ -82,6 +82,7 @@ mkdir -p "$WORK/bin" "$WORK/proj/a" "$WORK/proj/b" "$WORK/proj/launched" "$(dirn
 cat >"$WORK/bin/claude" <<'EOF'
 #!/bin/sh
 printf '[%s]' "$@" >"$CG_TEST_DIR/args.$$"
+echo "${CLAUDE_GRID:-unset}" >"$CG_TEST_DIR/grid.$$"
 exec sleep 600
 EOF
 cat >"$WORK/bin/launcher" <<'EOF'
@@ -100,6 +101,9 @@ section "Scripts"
 for script in "$REPO"/bin/claude-grid "$REPO"/install.sh "$REPO"/libexec/claude-grid/*.sh; do
   check "parses: ${script#"$REPO"/}" "$BASH_BIN" -n "$script"
 done
+# bash 3.2 reads the bytes of a character like · or ─ as part of a variable name: write ${name}·.
+check "no \$name directly followed by a non-ASCII character" sh -c \
+  "! perl -ne 'print \"\$ARGV:\$.: \$_\" if /\\\$[A-Za-z_][A-Za-z0-9_]*[^\\x00-\\x7F]/; close ARGV if eof' '$REPO'/bin/claude-grid '$REPO'/install.sh '$REPO'/libexec/claude-grid/*.sh | grep ."
 expect "--version" '^claude-grid [0-9]' cg --version
 expect "-h lists the commands" 'claude-grid kill --all' cg -h
 expect "unknown options are refused" 'unknown option: --bogus' cg --bogus
@@ -118,6 +122,8 @@ fi
 expect "the grid knows its name" '^main$' tg main show -gqv @cg_grid
 expect "the prefix is applied" '^C-Space$' tg main show -gqv prefix
 expect "ls shows the grid and its panes" 'grid main \(detached\)' cg ls
+
+expect "claude knows which grid it runs in" '^main$' sh -c "cat '$WORK'/grid.* | sort -u"
 
 section "Floating"
 pane="$(tg main list-panes -t claude -F '#{pane_id}' | head -n 1)"
@@ -203,12 +209,45 @@ expect "each pane gets --worktree" '^2$' sh -c "grep -l '\\[--worktree\\]$' '$WO
 expect "a named worktree is fine for one new pane" '^3$' sh -c "tmux -L claude-grid-wt list-panes -s -t claude | wc -l | tr -d ' '"
 tg wt kill-server
 
+section "--minimal-status"
+rm -f "$WORK"/args.*
+(cd "$WORK/proj" && cg --grid mini a --minimal-status >/dev/null 2>&1)
+wait_for sh -c "ls '$WORK'/args.* >/dev/null 2>&1"
+expect "panes get the settings file with the statusLine" "\\[--settings\\]\\[$STATE/claude-minimal-status.json\\]" sh -c "cat '$WORK'/args.*"
+if command -v jq >/dev/null; then
+  jqx() { env -u XDG_CONFIG_HOME -u XDG_STATE_HOME jq "$@"; }
+  expect "it uses the bundled one-liner in the theme's accent color" "statusline.sh' '#56B4E9'$" jqx -r .statusLine.command "$STATE/claude-minimal-status.json"
+  check "it keeps the same hooks" sh -c "[ \"\$(env -u XDG_CONFIG_HOME -u XDG_STATE_HOME jq -c .hooks '$STATE/claude-minimal-status.json')\" = \"\$(env -u XDG_CONFIG_HOME -u XDG_STATE_HOME jq -c .hooks '$STATE/claude-hooks.json')\" ]"
+  check "the plain hooks file has no statusLine" sh -c "env -u XDG_CONFIG_HOME -u XDG_STATE_HOME jq -e 'has(\"statusLine\") | not' '$STATE/claude-hooks.json'"
+  write_config 'MINIMAL_STATUS_COMMAND=~/.claude/my "compact" line.sh'
+  (cd "$WORK/proj" && cg --grid mini a --minimal-status >/dev/null 2>&1)
+  expect "MINIMAL_STATUS_COMMAND replaces the one-liner" '^~/.claude/my "compact" line.sh$' jqx -r .statusLine.command "$STATE/claude-minimal-status.json"
+  write_config
+fi
+tg mini kill-server
+statusline() { printf '%s' "$2" | env -i PATH="$1" "$BASH_BIN" "$REPO/libexec/claude-grid/statusline.sh" | strip; }
+session='{"workspace":{"project_dir":"/r/api","current_dir":"/tmp"},"model":{"display_name":"Opus 5.5"},"effort":{"level":"high"},"context_window":{"used_percentage":41.6},"cost":{"total_cost_usd":1.2345}}'
+in_worktree='{"workspace":{"project_dir":"/r/api","current_dir":"/tmp"},"worktree":{"name":"bright-fox","branch":"worktree-bright-fox"},"model":{"display_name":"Sonnet 5.5"}}'
+if command -v jq >/dev/null; then
+  # shellcheck disable=SC2016 # the $ is a literal dollar sign in the pattern
+  expect "the one-liner shows folder, model, effort, context and cost" '^api · Opus 5.5 high · 42% context · \$1\.23$' statusline "$PATH" "$session"
+  expect "in a worktree it shows the worktree and its branch" '^api \[bright-fox\] · worktree-bright-fox · Sonnet 5.5$' statusline "$PATH" "$in_worktree"
+fi
+mkdir -p "$WORK/nojq-git"
+for tool in git cat; do ln -s "$(command -v "$tool")" "$WORK/nojq-git/$tool"; done
+expect "without jq it shows the folder and branch" '^repo · (main|master)$' sh -c "cd '$WORK/repo' && git -c user.name=t -c user.email=t@t commit -q --allow-empty -m init && printf '{}' | env -i PATH='$WORK/nojq-git' '$BASH_BIN' '$REPO/libexec/claude-grid/statusline.sh' | perl -pe 's/\\e\\[[0-9;]*m//g'"
+
 section "Launchers"
 write_config "launcher=*/launched|$WORK/bin/launcher"
 (cd "$WORK/proj" && cg --model opus launched -- --effort high 'Bash(git:*)' >/dev/null 2>&1)
 wait_for sh -c "ls '$WORK'/launcher.* >/dev/null 2>&1"
 expect "a matching folder starts through its launcher with every flag, unescaped" \
   "^--settings $STATE/claude-hooks.json --model opus --effort high Bash\\(git:\\*\\)$" sh -c "cat '$WORK'/launcher.*"
+rm -f "$WORK"/launcher.*
+(cd "$WORK/proj" && cg --grid mini launched --minimal-status >/dev/null 2>&1)
+wait_for sh -c "ls '$WORK'/launcher.* >/dev/null 2>&1"
+expect "launchers get the --minimal-status settings too" "^--settings $STATE/claude-minimal-status.json$" sh -c "cat '$WORK'/launcher.*"
+tg mini kill-server
 expect "a value with a space is refused for launcher panes" 'launcher, which can.t receive "be terse"' \
   cg --grid spaced "$WORK/proj/launched" -- --append-system-prompt "be terse"
 check "and no grid starts" sh -c "! tmux -L claude-grid-spaced has-session 2>/dev/null"
@@ -233,7 +272,8 @@ expect "themes lists bundled and user themes" 'tokyo-night' cg themes
 write_config
 
 section "Settings menu"
-on_tty '8\ngruvbox\n6\n40\n4\n500\n70\n1\nC-Spce\nC-a\n15\na\n*/proj\nmise run claude\n\ns\n' "$BASH_BIN" "$REPO/bin/claude-grid" config >"$WORK/menu.out" 2>&1
+# Menu numbers follow SETTING_KEYS; LAUNCHERS comes after the last setting.
+on_tty '8\ngruvbox\n6\n40\n4\n500\n70\n1\nC-Spce\nC-a\n16\na\n*/proj\nmise run claude\n\ns\n' "$BASH_BIN" "$REPO/bin/claude-grid" config >"$WORK/menu.out" 2>&1
 menu="$(strip <"$WORK/menu.out")"
 expect "rejects an out-of-range value" 'FLOAT_WIDTH must be 1-100' printf '%s' "$menu"
 expect "rejects a key tmux doesn't know" "doesn't know the key C-Spce" printf '%s' "$menu"
