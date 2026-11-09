@@ -15,6 +15,10 @@ permission, **● working**, or **✓ done**. One key jumps to the next session 
 Another floats the focused session over the grid, large and centered, with the rest faded
 behind it.
 
+![A claude-grid window with three Claude Code sessions tiled in a grid, the focused pane outlined in blue](docs/images/grid.png)
+
+![The same grid with one session floating large in the center and the other sessions faded behind it](docs/images/floating-pane.png)
+
 ## It doesn't change your terminal setup
 
 claude-grid uses [tmux](https://tmux.github.io) to draw the grid, but you don't have to use tmux, know tmux, or change
@@ -71,6 +75,44 @@ offers to open the settings menu.
 **Upgrade:** `git pull` (with `--copy`, run `./install.sh --copy` again afterwards).
 
 Run `claude-grid doctor` to check the setup.
+
+## Uninstall
+
+From the checkout:
+
+```sh
+claude-grid kill --all       # end any running grids first
+./install.sh --uninstall     # add the same --prefix if you installed with one
+```
+
+`--uninstall` removes:
+
+- the `claude-grid` command (`~/.local/bin/claude-grid`)
+- any second name you added with `--alias`
+- the copied support files, if you installed with `--copy` (`~/.local/libexec/claude-grid`)
+- the generated tmux config and hooks file (`~/.local/state/claude-grid`)
+
+It keeps your settings and themes in `~/.config/claude-grid`, and the checkout itself.
+
+### Removing it by hand
+
+If the checkout is gone, or you'd rather not run the script, these are all the places
+claude-grid writes to (with the default `~/.local` prefix and XDG folders):
+
+```sh
+claude-grid kill --all                # end any running grids
+rm ~/.local/bin/claude-grid           # the command: a link to the checkout, or a copy
+rm ~/.local/bin/NAME                  # only if you added a second name with --alias NAME
+rm -rf ~/.local/libexec/claude-grid   # only if you installed with --copy
+rm -rf ~/.local/state/claude-grid     # generated files, rebuilt on every run
+rm -rf ~/.config/claude-grid          # your settings and themes
+rm -rf ~/path/to/claude-grid          # the checkout
+```
+
+There's nothing else to undo: claude-grid never touches your shell rc files, your
+`~/.tmux.conf` or tmux sessions, or your Claude Code settings. Ended grids can leave empty
+socket files named `claude-grid-*` in tmux's socket folder (`/tmp/tmux-<your user id>/`
+by default); they're harmless.
 
 ## Usage
 
