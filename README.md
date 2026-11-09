@@ -15,9 +15,12 @@ permission, **● working**, or **✓ done**. One key jumps to the next session 
 Another floats the focused session over the grid, large and centered, with the rest faded
 behind it.
 
-![A claude-grid window with three Claude Code sessions tiled in a grid, the focused pane outlined in blue](docs/images/grid.png)
-
-![The same grid with one session floating large in the center and the other sessions faded behind it](docs/images/floating-pane.png)
+<p>
+  <a href="docs/images/grid.png"><img src="docs/images/grid.png" width="49%" alt="A claude-grid window with three Claude Code sessions tiled in a grid, the focused pane outlined in blue"></a>
+  <a href="docs/images/floating-pane.png"><img src="docs/images/floating-pane.png" width="49%" alt="The same grid with one session floating large in the center and the other sessions faded behind it"></a>
+  <br>
+  <sub>Three sessions in a grid, and the same grid with one session floating. Click either to enlarge.</sub>
+</p>
 
 ## It doesn't change your terminal setup
 
