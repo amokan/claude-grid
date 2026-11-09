@@ -18,7 +18,7 @@ behind it.
 ## It doesn't change your terminal setup
 
 claude-grid uses tmux to draw the grid, but you don't have to use tmux, know tmux, or change
-anything about how you work today.
+anything about how you work today if you're an existing tmux user.
 
 - **tmux runs only while a grid is open.** Close the grid and no tmux is left running.
 - **Your tmux config is never read or changed.** Each grid runs on its own private tmux server
