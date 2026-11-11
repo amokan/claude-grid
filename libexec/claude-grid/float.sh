@@ -24,14 +24,28 @@ panes() { tmux list-panes -t "$PANE" -F '#{pane_id} #{pane_floating_flag}'; }
 sink_others() {
   local keep="$1" pane floating
   while read -r pane floating; do
-    [ "$floating" = 1 ] && [ "$pane" != "$keep" ] && tmux join-pane -s "$pane" -t "$pane"
+    [ "$floating" = 1 ] && [ "$pane" != "$keep" ] && sink "$pane"
   done < <(panes)
 }
 
 is_floating() { [ "$(tmux display -p -t "$1" '#{pane_floating_flag}')" = 1 ]; }
 
+# The pane ids in the window, in layout order.
+grid_panes() { tmux display -p -t "$1" '#{P:#{pane_id} }'; }
+
+# Puts a floating pane back into the grid. tmux returns it to its old place but can split the
+# space one column or row differently than before, so the grid layout saved by lift is applied
+# again, as long as the window still has the same panes.
+sink() {
+  tmux join-pane -s "$1" -t "$1"
+  [ "$(tmux show -wqv -t "$1" @cg_grid_panes)" = "$(grid_panes "$1")" ] || return 0
+  tmux select-layout -t "$1" "$(tmux show -wqv -t "$1" @cg_grid_layout)"
+}
+
 lift() {
   [ "$(tmux display -p -t "$1" '#{window_panes}')" -gt 1 ] || return 0
+  tmux set -w -t "$1" @cg_grid_layout "$(tmux display -p -t "$1" '#{window_layout}')"
+  tmux set -w -t "$1" @cg_grid_panes "$(grid_panes "$1")"
   tmux break-pane -W -s "$1" -x "$WIDTH" -y "$HEIGHT" -X "$LEFT" -Y "$TOP"
 }
 
@@ -62,7 +76,7 @@ case "$1" in
   restyle) ;;
   toggle)
     sink_others "$PANE"
-    if is_floating "$PANE"; then tmux join-pane -s "$PANE" -t "$PANE"; else lift "$PANE"; fi ;;
+    if is_floating "$PANE"; then sink "$PANE"; else lift "$PANE"; fi ;;
   focus)
     sink_others "$PANE"
     is_floating "$PANE" || lift "$PANE" ;;

@@ -132,6 +132,21 @@ expect "f floats the pane" '^1$' tg main display -p -t "$pane" '#{pane_floating_
 expect "the grid behind it is faded" 'dim=55' sh -c "tmux -L claude-grid-main list-panes -t claude -F '#{pane_id}' | tail -n 1 | xargs -I{} tmux -L claude-grid-main show -pv -t {} window-style"
 tg main run-shell -t "$pane" "#{q:@cg_libexec}/float.sh sink $pane"
 expect "Esc puts it back" '^0$' tg main display -p -t "$pane" '#{pane_floating_flag}'
+# An even width splits a row of two panes unevenly, which is when tmux used to put a pane back
+# one column off.
+geometry() { tg main display -p -t claude '#{P:#{pane_id}=#{pane_left}:#{pane_top}:#{pane_width}x#{pane_height} }'; }
+tg main resize-window -t claude -x 162 -y 41
+tg main select-layout -t claude tiled
+before="$(geometry)"
+moved=""
+for p in $(tg main list-panes -t claude -F '#{pane_id}'); do
+  tg main run-shell -t "$p" "#{q:@cg_libexec}/float.sh toggle $p"
+  tg main run-shell -t "$p" "#{q:@cg_libexec}/float.sh sink $p"
+  [ "$(geometry)" = "$before" ] || moved="$moved $p"
+  tg main select-layout -t claude tiled
+done
+check "floating a pane and putting it back leaves the grid as it was" test -z "$moved"
+tg main select-pane -t "$pane"
 
 section "Pane state hook"
 grid_tmux="$SOCKET_DIR/claude-grid-main,1,0"
