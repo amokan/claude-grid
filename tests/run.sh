@@ -250,6 +250,26 @@ mkdir -p "$WORK/nojq-git"
 for tool in git cat; do ln -s "$(command -v "$tool")" "$WORK/nojq-git/$tool"; done
 expect "without jq it shows the folder and branch" '^repo · (main|master)$' sh -c "cd '$WORK/repo' && git -c user.name=t -c user.email=t@t commit -q --allow-empty -m init && printf '{}' | env -i PATH='$WORK/nojq-git' '$BASH_BIN' '$REPO/libexec/claude-grid/statusline.sh' | perl -pe 's/\\e\\[[0-9;]*m//g'"
 
+section "--precheck"
+# shellcheck disable=SC2016 # $CLAUDE_GRID is for the check script
+printf '#!/bin/sh\necho "checked $CLAUDE_GRID"\nexit 0\n' >"$WORK/bin/pass-check"
+printf '#!/bin/sh\necho "precheck: not ready"\nexit 3\n' >"$WORK/bin/fail-check"
+chmod +x "$WORK/bin/pass-check" "$WORK/bin/fail-check"
+write_config "PRECHECK=$WORK/bin/fail-check"
+expect "a failing precheck shows its output" 'precheck: not ready' cg --grid pre "$WORK/proj/a"
+expect "and why no grid started" 'precheck failed \(exit status 3\), so grid pre didn.t start' cg --grid pre "$WORK/proj/a"
+check "no grid starts" sh -c "! tmux -L claude-grid-pre has-session 2>/dev/null"
+expect "it says it's running the precheck first" "running precheck: $WORK/bin/fail-check" cg --grid pre "$WORK/proj/a"
+(cd "$WORK/proj" && cg --grid pre a --no-precheck >/dev/null 2>&1)
+check "--no-precheck skips it for one run" tg pre has-session -t claude
+expect "panes added to a running grid skip it" '^2$' sh -c "cd '$WORK/proj' && '$BASH_BIN' '$REPO/bin/claude-grid' --grid pre a >/dev/null 2>&1; tmux -L claude-grid-pre list-panes -s -t claude | wc -l | tr -d ' '"
+tg pre kill-server
+write_config
+expect "--precheck runs a command for one run, with CLAUDE_GRID set" '^checked pre$' cg --grid pre "$WORK/proj/a" --precheck "$WORK/bin/pass-check"
+check "and starts the grid when it passes" tg pre has-session -t claude
+tg pre kill-server
+expect "--precheck needs a command" '--precheck needs a command' cg --grid pre --precheck=
+
 section "Launchers"
 write_config "launcher=*/launched|$WORK/bin/launcher"
 (cd "$WORK/proj" && cg --model opus launched -- --effort high 'Bash(git:*)' >/dev/null 2>&1)
@@ -286,7 +306,7 @@ write_config
 
 section "Settings menu"
 # Menu numbers follow SETTING_KEYS; LAUNCHERS comes after the last setting.
-on_tty '8\ngruvbox\n6\n40\n4\n500\n70\n1\nC-Spce\nC-a\n17\na\n*/proj\nmise run claude\n\ns\n' "$BASH_BIN" "$REPO/bin/claude-grid" config >"$WORK/menu.out" 2>&1
+on_tty '8\ngruvbox\n6\n40\n4\n500\n70\n1\nC-Spce\nC-a\n18\na\n*/proj\nmise run claude\n\ns\n' "$BASH_BIN" "$REPO/bin/claude-grid" config >"$WORK/menu.out" 2>&1
 menu="$(strip <"$WORK/menu.out")"
 expect "rejects an out-of-range value" 'FLOAT_WIDTH must be 1-100' printf '%s' "$menu"
 expect "rejects a key tmux doesn't know" "doesn't know the key C-Spce" printf '%s' "$menu"

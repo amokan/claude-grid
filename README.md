@@ -144,9 +144,42 @@ claude-grid ~/api:3 ~/web:2       # three panes in ~/api, two in ~/web
 claude-grid -n 4                  # four panes in the current folder
 claude-grid ~/api --model opus    # start the new panes on a specific model
 claude-grid ~/api:4 --minimal-status   # a one-line Claude statusLine in the new panes
+claude-grid --precheck ~/bin/claude-grid-precheck.sh   # start the grid only if the check passes
 ```
 
 Running `claude-grid DIR` while a grid is open adds panes to it.
+
+### Precheck script
+
+If your sessions need something in place first, such as a login or a running service, you can write a
+script that checks it. Before a new grid starts, claude-grid runs the script on your terminal
+and opens the grid only if it exits 0. If it fails, its output stays on screen and no grid
+starts. For example:
+
+```sh
+#!/bin/sh
+# ~/bin/claude-grid-precheck.sh
+mytool whoami >/dev/null 2>&1 || { echo "mytool: not logged in, run mytool login"; exit 1; }
+[ -n "${API_TOKEN:-}" ] || { echo "API_TOKEN isn't set"; exit 1; }
+```
+
+To run it only when you ask for it, pass it with `--precheck`:
+
+```sh
+claude-grid --precheck ~/bin/claude-grid-precheck.sh ~/api:3
+```
+
+To run it before every new grid, set `PRECHECK` instead, and skip it once with `--no-precheck`:
+
+```sh
+claude-grid config set PRECHECK=~/bin/claude-grid-precheck.sh
+claude-grid --no-precheck ~/api      # this run starts without the check
+```
+
+The command runs with `sh`, in the folder you ran claude-grid from, with `CLAUDE_GRID` set to
+the new grid's name. It has the terminal, so it can also fix the problem itself, or ask you,
+instead of failing. Panes added to a grid that's already running, including with `c` and `C`,
+skip the check.
 
 ### A shorter statusLine
 
@@ -303,6 +336,7 @@ setting with its default.
 | `CLAUDE_COMMAND` | `claude` | what each pane runs; add flags here, e.g. `claude --model opus` |
 | `MINIMAL_STATUS` | `false` | give new panes a one-line statusLine; see [A shorter statusLine](#a-shorter-statusline) |
 | `MINIMAL_STATUS_COMMAND` | empty | the statusLine command for minimal-status panes; empty uses claude-grid's one-liner |
+| `PRECHECK` | empty | a command run before a new grid starts; see [A precheck script](#a-precheck-script) |
 | `launcher=` | none | see [Project launchers](#project-launchers) |
 
 ### Themes

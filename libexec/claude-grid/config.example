@@ -47,6 +47,12 @@
 # ~/.claude/statusline-compact.sh; it gets the same JSON on stdin as any Claude statusLine.
 #MINIMAL_STATUS_COMMAND=
 
+# A command run before a new grid starts, e.g. a script that checks what your sessions need.
+# The grid opens only if it exits 0; otherwise its output stays on screen. It runs with sh,
+# on your terminal, with CLAUDE_GRID set to the grid's name. Panes added to a running grid
+# skip it. For one run: claude-grid --precheck CMD, or --no-precheck
+#PRECHECK=
+
 # Folders whose Claude starts through a project launcher instead of CLAUDE_COMMAND.
 # One line per rule: launcher=folder-glob|command. The first matching rule wins.
 # claude-grid passes its hook flags in $CLAUDE_EXTRA_ARGS; the launcher must hand them to

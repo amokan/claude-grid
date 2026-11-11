@@ -37,7 +37,7 @@ readonly STATE_DIR="${XDG_STATE_HOME:-$HOME/.local/state}/claude-grid"
 # ---- Settings ---------------------------------------------------------------
 
 readonly COLOR_KEYS="COLOR_WAITING COLOR_ACTIVE COLOR_BORDER COLOR_TEXT COLOR_STATUS"
-readonly SETTING_KEYS="PREFIX START_FLOATING AUTO_FLOAT FLOAT_WIDTH FLOAT_HEIGHT FADE SWITCH_GRACE_MS THEME $COLOR_KEYS CLAUDE_COMMAND MINIMAL_STATUS MINIMAL_STATUS_COMMAND"
+readonly SETTING_KEYS="PREFIX START_FLOATING AUTO_FLOAT FLOAT_WIDTH FLOAT_HEIGHT FADE SWITCH_GRACE_MS THEME $COLOR_KEYS CLAUDE_COMMAND MINIMAL_STATUS MINIMAL_STATUS_COMMAND PRECHECK"
 
 builtin_default() {
   case "$1" in
@@ -57,6 +57,7 @@ builtin_default() {
     CLAUDE_COMMAND) echo "claude" ;;
     MINIMAL_STATUS) echo "false" ;;
     MINIMAL_STATUS_COMMAND) echo "" ;;
+    PRECHECK) echo "" ;;
   esac
 }
 
@@ -86,6 +87,7 @@ describe() {
     CLAUDE_COMMAND) echo "what each pane runs; add flags here, e.g. claude --model opus" ;;
     MINIMAL_STATUS) echo "true: new panes get a one-line Claude statusLine (for one run: --minimal-status, --no-minimal-status)" ;;
     MINIMAL_STATUS_COMMAND) echo "the statusLine command for minimal-status panes (empty: claude-grid's one-liner)" ;;
+    PRECHECK) echo "a command run before a new grid starts; the grid opens only if it succeeds (for one run: --precheck CMD, --no-precheck)" ;;
   esac
 }
 
@@ -571,6 +573,8 @@ ${b}Start${r}
     --grid NAME               use the grid named NAME (started if needed), even if attached elsewhere
     --minimal-status          a one-line Claude statusLine in the new panes (see MINIMAL_STATUS_COMMAND)
     --no-minimal-status       your own statusLine in the new panes, when MINIMAL_STATUS=true
+    --precheck CMD            run CMD before a new grid starts, and start it only if CMD succeeds
+    --no-precheck             skip the PRECHECK setting for one run
     -- FLAGS...               pass the rest to claude in each new pane, e.g. -- --worktree --effort high
 
 ${b}Manage${r}
@@ -772,7 +776,13 @@ tmux_knows_key() {
 }
 
 # How the menu shows a setting that's empty.
-empty_means() { case "$1" in MINIMAL_STATUS_COMMAND) echo "(claude-grid's one-liner)" ;; *) echo "(empty)" ;; esac; }
+empty_means() {
+  case "$1" in
+    MINIMAL_STATUS_COMMAND) echo "(claude-grid's one-liner)" ;;
+    PRECHECK) echo "(none)" ;;
+    *) echo "(empty)" ;;
+  esac
+}
 
 edit_setting() {
   local key="$1" value default msg
@@ -1106,6 +1116,17 @@ while [ $# -gt 0 ]; do
     --no-minimal-status)
       MINIMAL_STATUS=false
       shift ;;
+    --precheck)
+      [ -n "${2:-}" ] || die "--precheck needs a command, e.g. --precheck ~/bin/claude-grid-precheck.sh"
+      PRECHECK="$2"
+      shift 2 ;;
+    --precheck=*)
+      PRECHECK="${1#--precheck=}"
+      [ -n "$PRECHECK" ] || die "--precheck needs a command, e.g. --precheck ~/bin/claude-grid-precheck.sh"
+      shift ;;
+    --no-precheck)
+      PRECHECK=""
+      shift ;;
     --grid | -g)
       [ -n "${2:-}" ] || die "$1 needs a grid name"
       GRID="$2"
@@ -1181,6 +1202,15 @@ if $worktree; then
     git -C "$dir" rev-parse --is-inside-work-tree >/dev/null 2>&1 ||
       die "--worktree needs a git repository, and $dir isn't one"
   done
+fi
+
+# The precheck runs on this terminal, so it can print what's wrong or ask for input. Panes added
+# to a running grid skip it: c and C run without a terminal.
+if $fresh && [ -n "$PRECHECK" ]; then
+  ui_note "running precheck: $PRECHECK"
+  CLAUDE_GRID="$GRID" sh -c "$PRECHECK" ||
+    die "precheck failed (exit status $?), so grid $GRID didn't start: $PRECHECK
+  Fix what it reports and run claude-grid again, or skip it once with --no-precheck."
 fi
 
 write_generated
