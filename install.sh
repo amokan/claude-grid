@@ -69,6 +69,14 @@ if [ -d "$PREFIX" ]; then
 fi
 BIN_DIR="$PREFIX/bin"
 LIBEXEC_DIR="$PREFIX/libexec/claude-grid"
+# The install replaces PREFIX/bin/claude-grid and PREFIX/libexec/claude-grid, so a checkout in
+# either place would be deleted, .git and all.
+if [ -d "$PREFIX" ]; then
+  case "$REPO/" in
+    "$(cd -P "$PREFIX" && pwd)/bin/claude-grid/"* | "$(cd -P "$PREFIX" && pwd)/libexec/claude-grid/"*)
+      die "this checkout ($REPO) is where install.sh would put claude-grid; clone it somewhere else, or use another --prefix" ;;
+  esac
+fi
 CONFIG_DIR="${XDG_CONFIG_HOME:-$HOME/.config}/claude-grid"
 STATE_DIR="${XDG_STATE_HOME:-$HOME/.local/state}/claude-grid"
 INTERACTIVE=false
@@ -126,6 +134,10 @@ install_files() {
     rm -f "$target"
     cp "$REPO/bin/claude-grid" "$target"
     chmod 755 "$target"
+    # Only a folder that holds claude-grid's files (tmux.conf) is replaced.
+    if [ -e "$LIBEXEC_DIR" ] && [ ! -f "$LIBEXEC_DIR/tmux.conf" ] && ! $FORCE; then
+      die "$LIBEXEC_DIR exists and isn't claude-grid's; move it away or rerun with --force"
+    fi
     rm -rf "$LIBEXEC_DIR"
     mkdir -p "$(dirname "$LIBEXEC_DIR")"
     cp -R "$REPO/libexec/claude-grid" "$LIBEXEC_DIR"

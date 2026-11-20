@@ -633,6 +633,16 @@ mkdir -p "$copy"
 cp -R "$REPO/bin" "$REPO/libexec" "$REPO/install.sh" "$copy/"
 expect "refuses a --prefix inside the checkout" "can't be inside this checkout" "$BASH_BIN" "$copy/install.sh" --prefix "$copy" -y
 check "and leaves the checkout's files alone" sh -c "[ -f '$copy/bin/claude-grid' ] && [ ! -L '$copy/bin/claude-grid' ] && [ -f '$copy/libexec/claude-grid/tmux.conf' ]"
+inside="$WORK/pfx/libexec/claude-grid"
+mkdir -p "$inside"
+cp -R "$REPO/bin" "$REPO/libexec" "$REPO/install.sh" "$inside/"
+mkdir "$inside/.git"
+expect "refuses a checkout that sits where the copy would go" "is where install.sh would put claude-grid" "$BASH_BIN" "$inside/install.sh" --copy --prefix "$WORK/pfx" -y
+check "and leaves that checkout alone" test -d "$inside/.git"
+mkdir -p "$WORK/pfx2/libexec/claude-grid"
+touch "$WORK/pfx2/libexec/claude-grid/precious"
+expect "copy mode won't replace a libexec folder that isn't claude-grid's" "isn't claude-grid's" "$BASH_BIN" "$REPO/install.sh" --copy --prefix "$WORK/pfx2" -y
+check "and leaves it alone" test -f "$WORK/pfx2/libexec/claude-grid/precious"
 
 printf '\n%d passed, %d failed\n' "$PASSED" "$FAILED"
 [ "$FAILED" -eq 0 ]
