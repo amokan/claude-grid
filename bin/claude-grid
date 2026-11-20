@@ -564,15 +564,9 @@ pick_grid() {
 
 check_tmux() {
   command -v tmux >/dev/null || die "tmux not found; claude-grid needs tmux 3.8 or newer"
-  local version re='^([0-9]+)\.([0-9]+)'
+  local version
   version="$(tmux -V)"
-  version="${version#tmux }"
-  version="${version#next-}"
-  [ "$version" = master ] && return 0
-  [[ "$version" =~ $re ]] || return 0
-  if [ "${BASH_REMATCH[1]}" -lt 3 ] || { [ "${BASH_REMATCH[1]}" -eq 3 ] && [ "${BASH_REMATCH[2]}" -lt 8 ]; }; then
-    die "tmux $version is too old; claude-grid needs tmux 3.8 or newer for floating panes"
-  fi
+  tmux_new_enough "$version" || die "${version#tmux } is too old; claude-grid needs tmux 3.8 or newer for floating panes"
 }
 
 claude_cmd() {

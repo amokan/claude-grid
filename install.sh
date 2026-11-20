@@ -105,10 +105,11 @@ check_requirements() {
   local version
   if command -v tmux >/dev/null; then
     version="$(tmux -V)"
-    case "$version" in
-      "tmux 3.8"* | "tmux 3.9"* | "tmux 4."* | "tmux next-"* | "tmux master"*) ui_ok "$version" ;;
-      *) ui_warn "$version found; claude-grid needs tmux 3.8 or newer for floating panes (brew install tmux)" ;;
-    esac
+    if tmux_new_enough "$version"; then
+      ui_ok "$version"
+    else
+      ui_warn "$version found; claude-grid needs tmux 3.8 or newer for floating panes (brew install tmux)"
+    fi
   else
     ui_warn "tmux not found; claude-grid needs tmux 3.8 or newer (brew install tmux)"
   fi

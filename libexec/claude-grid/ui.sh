@@ -53,3 +53,13 @@ ui_dim() { printf '%s%s%s' "$UI_DIM" "$*" "$UI_RESET"; }
 
 # Clears the screen in a terminal; prints a blank line otherwise.
 ui_clear() { if [ "$UI_COLOR" = 1 ]; then printf '\033[H\033[2J'; else echo; fi; }
+
+# Whether `tmux -V` output is tmux 3.8 or newer, which floating panes need. A version it can't
+# read, like a development build (master), counts as new enough. Used by claude-grid and
+# install.sh, so both judge the same way.
+tmux_new_enough() {
+  local version="${1#tmux }" re='^([0-9]+)\.([0-9]+)'
+  version="${version#next-}"
+  [[ "$version" =~ $re ]] || return 0
+  [ "${BASH_REMATCH[1]}" -gt 3 ] || { [ "${BASH_REMATCH[1]}" -eq 3 ] && [ "${BASH_REMATCH[2]}" -ge 8 ]; }
+}

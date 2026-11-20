@@ -107,6 +107,15 @@ check "no \$name directly followed by a non-ASCII character" sh -c \
 expect "--version" '^claude-grid [0-9]' cg --version
 expect "-h lists the commands" 'claude-grid kill --all' cg -h
 expect "unknown options are refused" 'unknown option: --bogus' cg --bogus
+# shellcheck disable=SC2016 # $1 is for the inner bash
+new_enough() { "$BASH_BIN" -c '. "$1/libexec/claude-grid/ui.sh"; tmux_new_enough "$2"' _ "$REPO" "$1"; }
+for version in "tmux 3.8" "tmux 3.8a" "tmux 3.10" "tmux 4.0" "tmux next-3.9" "tmux master"; do
+  check "tmux version check accepts $version" new_enough "$version"
+done
+too_old() { ! new_enough "$1"; }
+for version in "tmux 3.7" "tmux 3.7b" "tmux 2.9" "tmux next-3.4"; do
+  check "tmux version check refuses $version" too_old "$version"
+done
 
 section "Starting a grid"
 (cd "$WORK/proj" && cg a b:2 >/dev/null 2>&1)
