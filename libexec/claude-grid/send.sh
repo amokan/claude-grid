@@ -54,50 +54,70 @@ prompt_is_empty() {
   [ -z "${line//[[:space:]]/}" ]
 }
 
+# Prints why a pane can't take a command now, or nothing when it can.
+# @claude_hook_state is the last state a hook reported. Unlike @claude_state, focusing a pane
+# doesn't reset it, so a dialog the user has looked at but not answered still counts.
+pane_problem() {
+  local state
+  state="$(tmux display -p -t "$1" '#{@claude_hook_state}')"
+  case "$state" in
+    idle | done)
+      prompt_is_empty "$1"
+      case $? in
+        0) ;;
+        1) echo "has unsent text in its prompt" ;;
+        *) echo "its prompt isn't showing" ;;
+      esac ;;
+    working) echo "working" ;;
+    waiting) echo "waiting on a dialog" ;;
+    exited) echo "Claude has exited" ;;
+    '') echo "no state reported yet" ;;
+    *) echo "$state" ;;
+  esac
+}
+
+# A pane as listed: its number and name, with control characters replaced.
+pane_label() {
+  local label
+  label="$(tmux display -p -t "$1" '#{pane_index}:#{@claude_name}')"
+  printf '%s' "${label//[[:cntrl:]]/?}"
+}
+
 # Sorts the grid's panes into READY (pane ids) and SKIPPED ("3:name (reason)").
 READY=()
 SKIPPED=()
 survey() {
-  local id index state name reason
+  local id reason
   READY=()
   SKIPPED=()
-  # @claude_hook_state is the last state a hook reported. Unlike @claude_state, focusing a pane
-  # doesn't reset it, so a dialog the user has looked at but not answered still counts.
-  while read -r id index state; do
-    name="$(tmux display -p -t "$id" '#{@claude_name}')"
-    name="${name//[[:cntrl:]]/?}"
-    case "$state" in
-      idle | done)
-        prompt_is_empty "$id"
-        case $? in
-          0) READY+=("$id"); continue ;;
-          1) reason="has unsent text in its prompt" ;;
-          *) reason="its prompt isn't showing" ;;
-        esac ;;
-      working) reason="working" ;;
-      waiting) reason="waiting on a dialog" ;;
-      exited) reason="Claude has exited" ;;
-      '') reason="no state reported yet" ;;
-      *) reason="$state" ;;
-    esac
-    SKIPPED+=("$index:$name ($reason)")
-  done < <(tmux list-panes -s -t "$PANE" -F '#{pane_id} #{pane_index} #{@claude_hook_state}')
+  for id in $(tmux list-panes -s -t "$PANE" -F '#{pane_id}'); do
+    reason="$(pane_problem "$id")"
+    if [ -z "$reason" ]; then READY+=("$id"); else SKIPPED+=("$(pane_label "$id") ($reason)"); fi
+  done
 }
 
 plural() { if [ "$1" = 1 ]; then echo "1 pane"; else echo "$1 panes"; fi; }
 
 # Sends the command to the ready panes and prints one line saying what happened.
 send_all() {
-  local command="$1" id skipped="" msg
+  local command="$1" id skipped="" msg reason ready
   if ! msg="$(check_command "$command")"; then
     echo "not sent: the command $msg"
     return 2
   fi
   survey
-  for id in ${READY[@]+"${READY[@]}"}; do
-    # The text is typed literally, then Enter is pressed on its own.
-    tmux send-keys -t "$id" -l -- "$(tmux_word "$command")"
-    tmux send-keys -t "$id" Enter
+  ready=(${READY[@]+"${READY[@]}"})
+  READY=()
+  for id in ${ready[@]+"${ready[@]}"}; do
+    # Checked again right before typing: a pane can open a dialog while the others are sent to,
+    # and Enter would answer it. The text is typed literally, then Enter pressed, in one call.
+    reason="$(pane_problem "$id")"
+    if [ -n "$reason" ]; then
+      SKIPPED+=("$(pane_label "$id") ($reason)")
+      continue
+    fi
+    tmux send-keys -t "$id" -l -- "$(tmux_word "$command")" \; send-keys -t "$id" Enter
+    READY+=("$id")
   done
   if [ ${#SKIPPED[@]} -gt 0 ]; then
     skipped="$(printf '%s, ' "${SKIPPED[@]}")"
