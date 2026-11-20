@@ -420,6 +420,8 @@ expect "sends to the ready panes and lists the others with the reason" \
   'sent /reload-plugins to 2 panes; skipped .*busy \(working\).*asking \(waiting on a dialog\).*draft \(has unsent text in its prompt\).*gone \(Claude has exited\).*new \(no state reported yet\)' \
   cg send --grid send /reload-plugins
 check "an idle pane got the command" wait_for sh -c "tmux -L claude-grid-send capture-pane -p -S - -t '$(pane_named ready)' | grep -q '^got: /reload-plugins$'"
+expect "a command ending in ; is typed whole" 'sent /keep x; to 2 panes' cg send --grid send '/keep x;'
+check "with its ;" wait_for sh -c "tmux -L claude-grid-send capture-pane -p -S - -t '$(pane_named ready)' | grep -q '^got: /keep x;$'"
 check "so did a new session showing a dimmed suggestion" wait_for sh -c "tmux -L claude-grid-send capture-pane -p -S - -t '$(pane_named hint)' | grep -q 'got: /reload-plugins$'"
 check "a working pane got nothing" sh -c "! tmux -L claude-grid-send capture-pane -p -S - -t '$(pane_named busy)' | grep -q reload"
 check "a pane with a draft keeps it, unsent" sh -c "tmux -L claude-grid-send capture-pane -p -t '$(pane_named draft)' | grep -q '❯ half typed$'"
@@ -461,7 +463,7 @@ check "sending also puts the fade back as it was" test "$(styles)" = "$before"
 picker 'cnope\n/compact now\n' >"$WORK/picker.out" 2>&1
 expect "custom asks again for a command without a /" 'must start with /' strip <"$WORK/picker.out"
 check "and sends a valid one" wait_for sh -c "tmux -L claude-grid-send capture-pane -p -S - -t '$(pane_named ready)' | grep -q '^got: /compact now$'"
-check "only the commands themselves reach the pane, nothing from the screen" sh -c "! tmux -L claude-grid-send capture-pane -p -S - -t '$(pane_named ready)' | grep '^got:' | grep -vqE '^got: /(reload-plugins|reload-skills|from-inside|compact now)$'"
+check "only the commands themselves reach the pane, nothing from the screen" sh -c "! tmux -L claude-grid-send capture-pane -p -S - -t '$(pane_named ready)' | grep '^got:' | grep -vqE '^got: /(reload-plugins|reload-skills|from-inside|compact now|keep x;)$'"
 # The key binding opens the picker in a popup, which needs an attached client.
 (sleep 20 | TERM=xterm-256color pty tmux -L claude-grid-send attach -t claude >/dev/null 2>&1 &)
 wait_for sh -c "[ -n \"\$(tmux -L claude-grid-send list-clients -F '#{client_name}')\" ]"
@@ -522,6 +524,11 @@ mkdir -p "$WORK/proj/x#{session_name}y"
 (cd "$WORK/proj" && cg --grid hash 'x#{session_name}y' >/dev/null 2>&1)
 expect "a # in a folder name isn't expanded by tmux" '/x#\{session_name\}y$' tg hash display -p -t claude '#{pane_current_path}'
 tg hash kill-server
+mkdir -p "$WORK/proj/semi;"
+(cd "$WORK/proj" && cg --grid semi 'semi;' >/dev/null 2>&1)
+expect "a folder ending in ; starts its pane there" '/semi;$' tg semi display -p -t claude '#{pane_current_path}'
+expect "and keeps the ; in the pane's name" '^semi;$' tg semi show -pv -t claude @claude_name
+tg semi kill-server
 # tmux draws #[...] as a style and ## as a #, so a #[ is a style only after an odd run of #.
 unstyled() { ! tg main display -p -t "$pane" "$1" | perl -ne '$f = 1 if /(?<!#)(?:##)*#\[fg=red/; END { exit !$f }'; }
 for title in '#[fg=red bg=#E69F00] fake NEEDS INPUT' '##[fg=red bg=#E69F00] fake NEEDS INPUT'; do

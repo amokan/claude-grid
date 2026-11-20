@@ -119,7 +119,7 @@ draw() {
 start_in() {
   local dir="$1" out
   if out="$("$(opt @cg_bin)" --grid "$(opt @cg_grid)" "$dir" 2>&1)"; then
-    if [ -n "$CLIENT" ]; then tmux display-message -c "$CLIENT" -l "new Claude in $(show_path "$dir")"; fi
+    if [ -n "$CLIENT" ]; then tmux display-message -c "$CLIENT" -l "$(tmux_word "new Claude in $(show_path "$dir")")"; fi
     exit 0
   fi
   printf '\033[H\033[2J\n  %sCouldn'"'"'t start a Claude in %s:%s\n\n' "$WARN" "$(show_path "$dir")" "$R"

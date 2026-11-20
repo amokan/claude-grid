@@ -33,6 +33,8 @@ readonly STATE_DIR="${XDG_STATE_HOME:-$HOME/.local/state}/claude-grid"
 
 # shellcheck source=libexec/claude-grid/ui.sh
 . "$LIBEXEC/ui.sh"
+# shellcheck source=libexec/claude-grid/shared.sh
+. "$LIBEXEC/shared.sh"
 
 # ---- Settings ---------------------------------------------------------------
 
@@ -574,19 +576,20 @@ term_size() {
   if [ "$1" = rows ]; then echo "$rows"; else echo "$cols"; fi
 }
 
-# tmux expands formats like #{...} in a start folder, so a # in the path is doubled.
+# tmux expands formats like #{...} in a start folder, so a # in the path is doubled, and
+# tmux_word keeps a trailing ; in it.
 add_pane() {
   local dir pane
   dir="$(cd "$1" && pwd)"
   if grid_running "$GRID"; then
-    pane="$(t split-window -d -t "$(tiled_pane)" -c "${dir//#/##}" -P -F '#{pane_id}' "$(claude_cmd "$dir")")"
+    pane="$(t split-window -d -t "$(tiled_pane)" -c "$(tmux_word "${dir//#/##}")" -P -F '#{pane_id}' "$(claude_cmd "$dir")")"
     t select-layout -t "$SESSION" tiled
   else
-    pane="$(t new-session -d -s "$SESSION" -c "${dir//#/##}" -x "$(term_size cols)" -y "$(term_size rows)" -P -F '#{pane_id}' "$(claude_cmd "$dir")")"
+    pane="$(t new-session -d -s "$SESSION" -c "$(tmux_word "${dir//#/##}")" -x "$(term_size cols)" -y "$(term_size rows)" -P -F '#{pane_id}' "$(claude_cmd "$dir")")"
     t set -g @cg_grid "$GRID"
     t set -g @cg_autofloat "$AUTO_FLOAT"
   fi
-  t set -p -t "$pane" @claude_name "$(basename "$dir")"
+  t set -p -t "$pane" @claude_name "$(tmux_word "$(basename "$dir")")"
 }
 
 # run-shell expands formats, so the path goes in as #{q:...} rather than as text.
@@ -1250,7 +1253,7 @@ cmd_doctor() {
 
   ui_header "Install"
   ui_ok "claude-grid $VERSION $(ui_dim "($SELF)")"
-  if [ -f "$LIBEXEC/tmux.conf" ] && [ -x "$LIBEXEC/state.sh" ] && [ -x "$LIBEXEC/float.sh" ] && [ -x "$LIBEXEC/next-waiting.sh" ] && [ -x "$LIBEXEC/statusline.sh" ] && [ -x "$LIBEXEC/send.sh" ] && [ -x "$LIBEXEC/new-pane.sh" ] && [ -f "$LIBEXEC/popup.sh" ]; then
+  if [ -f "$LIBEXEC/tmux.conf" ] && [ -x "$LIBEXEC/state.sh" ] && [ -x "$LIBEXEC/float.sh" ] && [ -x "$LIBEXEC/next-waiting.sh" ] && [ -x "$LIBEXEC/statusline.sh" ] && [ -x "$LIBEXEC/send.sh" ] && [ -x "$LIBEXEC/new-pane.sh" ] && [ -f "$LIBEXEC/popup.sh" ] && [ -f "$LIBEXEC/shared.sh" ]; then
     ui_ok "support files $(ui_dim "($LIBEXEC)")"
   else
     ui_fail "support files missing or not executable in $LIBEXEC; reinstall with install.sh"; failed=1

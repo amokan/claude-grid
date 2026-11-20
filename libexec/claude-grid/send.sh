@@ -96,7 +96,7 @@ send_all() {
   survey
   for id in ${READY[@]+"${READY[@]}"}; do
     # The text is typed literally, then Enter is pressed on its own.
-    tmux send-keys -t "$id" -l -- "$command"
+    tmux send-keys -t "$id" -l -- "$(tmux_word "$command")"
     tmux send-keys -t "$id" Enter
   done
   if [ ${#SKIPPED[@]} -gt 0 ]; then
@@ -164,7 +164,7 @@ choose() {
       if [ -z "$item" ]; then survey; return 0; fi ;;
   esac
   report="$(send_all "$item")"
-  if [ -n "$CLIENT" ]; then tmux display-message -c "$CLIENT" -l "$report"; else printf '%s\n' "$report" >&2; fi
+  if [ -n "$CLIENT" ]; then tmux display-message -c "$CLIENT" -l "$(tmux_word "$report")"; else printf '%s\n' "$report" >&2; fi
   exit 0
 }
 

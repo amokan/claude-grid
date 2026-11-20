@@ -3,6 +3,9 @@
 # Sourced, not run. The script sets PANE (a pane in the grid) and CLIENT (the terminal) first.
 # shellcheck shell=bash disable=SC2034 # ANSWER and the colors are read by the scripts that source this
 
+# shellcheck source=libexec/claude-grid/shared.sh
+. "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/shared.sh"
+
 opt() { tmux show -gqv "$1"; }
 
 # Character counts and cuts need a UTF-8 locale, or "…" counts as 3.
@@ -49,7 +52,7 @@ open_popup() {
   command="$(printf '%q' "$(opt @cg_libexec)/$script")"
   for arg in "$@"; do command="$command $(printf '%q' "$arg")"; done
   tmux display-popup -c "$CLIENT" -E -w "$width" -h "$height" -b rounded -s "$style" -S "fg=$active" \
-    -T "#[align=centre fg=$active bold] $title " "$command"
+    -T "#[align=centre fg=$active bold] $title " "$(tmux_word "$command")"
 }
 
 # Fades every pane, the active one included, the way a floating pane fades the grid.
