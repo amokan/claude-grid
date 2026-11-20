@@ -474,6 +474,49 @@ check "Esc in the popup closes it and puts the fade back" wait_for sh -c '[ "$(t
 tg send kill-server
 write_config
 
+section "New Claude picker"
+(cd "$WORK/proj" && cg --grid newp a b a >/dev/null 2>&1)
+npane() { tg newp list-panes -s -t claude -F '#{pane_id} #{@claude_name}' | awk -v n="$1" '$2 == n { print $1; exit }'; }
+panes_in() { tg newp list-panes -s -t claude -F '#{@claude_name}' | grep -c "^$1\$"; }
+newpicker() {
+  local input="$1"
+  shift
+  on_tty "$input" env TMUX="$SOCKET_DIR/claude-grid-newp,1,0" "$BASH_BIN" "$REPO/libexec/claude-grid/new-pane.sh" menu "$(npane b)" "" "$@"
+}
+expect "c opens the folder picker" 'new-pane\.sh open' tg newp list-keys -T prefix c
+expect "C opens it at a typed folder" 'new-pane\.sh open .* other' tg newp list-keys -T prefix C
+newpicker '\033' >"$WORK/newp.out" 2>&1
+first_folder() { strip <"$WORK/newp.out" | grep -m 1 -oE 'proj/[ab].*' | sed 's/  */ /g; s/ *(1)$//'; }
+expect "the focused pane's folder comes first, marked" '^proj/b focused$' first_folder
+expect "a folder two panes use says so" 'proj/a +2 panes' strip <"$WORK/newp.out"
+check "Esc starts nothing" test "$(tg newp list-panes -s -t claude | wc -l | tr -d ' ')" = 3
+newpicker '\n' >/dev/null 2>&1
+check "Enter starts a Claude in the focused pane's folder" test "$(panes_in b)" = 2
+newpicker '2' >/dev/null 2>&1
+check "a number key starts one in that folder" test "$(panes_in a)" = 3
+newpicker 'onope\n../launched\n' >"$WORK/newp.out" 2>&1
+expect "a typed folder that doesn't exist is refused" "nope isn.t a folder" strip <"$WORK/newp.out"
+check "a relative one starts from the focused pane's folder" test "$(panes_in launched)" = 1
+newpicker '\n' other >/dev/null 2>&1
+check "C with an empty line starts nothing" test "$(panes_in launched)" = 1
+newpicker "$WORK/proj/launched\\n" other >/dev/null 2>&1
+check "C starts one in the typed folder" test "$(panes_in launched)" = 2
+write_config "FADE=99"
+newpicker '1x\033' >"$WORK/newp.out" 2>&1
+write_config
+one_line() { strip <"$1" | tr '\n' ' '; }
+expect "when claude-grid fails, the popup shows why" "Couldn.t start a Claude in .*FADE must be 0-90" one_line "$WORK/newp.out"
+before="$(tg newp list-panes -s -t claude | wc -l | tr -d ' ')"
+(sleep 20 | TERM=xterm-256color pty tmux -L claude-grid-newp attach -t claude >/dev/null 2>&1 &)
+wait_for sh -c "[ -n \"\$(tmux -L claude-grid-newp list-clients -F '#{client_name}')\" ]"
+client="$(tg newp list-clients -F '#{client_name}' | head -n 1)"
+tg newp send-keys -K -c "$client" C-Space c
+check "prefix + c opens the picker over the faded grid" wait_for sh -c "! tmux -L claude-grid-newp list-panes -s -t claude -F '#{window-active-style}' | grep -vq 'dim='"
+tg newp send-keys -K -c "$client" Enter
+check "and Enter adds a pane" wait_for sh -c "[ \$(tmux -L claude-grid-newp list-panes -s -t claude | wc -l) -gt $before ]"
+check "the fade comes off when it closes" wait_for sh -c "! tmux -L claude-grid-newp list-panes -s -t claude -F '#{window-active-style}' | grep -q 'dim='"
+tg newp kill-server
+
 section "Hostile names and values"
 mkdir -p "$WORK/proj/x#{session_name}y"
 (cd "$WORK/proj" && cg --grid hash 'x#{session_name}y' >/dev/null 2>&1)

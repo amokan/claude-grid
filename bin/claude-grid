@@ -673,7 +673,7 @@ A plain \`claude-grid\` in a second terminal opens a second grid instead of shar
 ${b}Keys inside a grid${r}, after $PREFIX:
   a  next waiting       1-9  pane          arrows  step        z  zoom
   f  float              F    auto-float    Esc     unfloat     Enter  float (right after switching)
-  p  promote            g    grid          c       new claude here    C  new claude in a directory
+  p  promote            g    grid          c       new claude (pick a folder)    C  new claude (type a folder)
   q  close this grid    d    detach        r       reload$([ "$MENU_KEY" = off ] || printf '      %s  slash command picker' "$MENU_KEY")
 
 $(ui_dim "Settings: $CONFIG_FILE")
@@ -1250,7 +1250,7 @@ cmd_doctor() {
 
   ui_header "Install"
   ui_ok "claude-grid $VERSION $(ui_dim "($SELF)")"
-  if [ -f "$LIBEXEC/tmux.conf" ] && [ -x "$LIBEXEC/state.sh" ] && [ -x "$LIBEXEC/float.sh" ] && [ -x "$LIBEXEC/next-waiting.sh" ] && [ -x "$LIBEXEC/statusline.sh" ] && [ -x "$LIBEXEC/send.sh" ]; then
+  if [ -f "$LIBEXEC/tmux.conf" ] && [ -x "$LIBEXEC/state.sh" ] && [ -x "$LIBEXEC/float.sh" ] && [ -x "$LIBEXEC/next-waiting.sh" ] && [ -x "$LIBEXEC/statusline.sh" ] && [ -x "$LIBEXEC/send.sh" ] && [ -x "$LIBEXEC/new-pane.sh" ] && [ -f "$LIBEXEC/popup.sh" ]; then
     ui_ok "support files $(ui_dim "($LIBEXEC)")"
   else
     ui_fail "support files missing or not executable in $LIBEXEC; reinstall with install.sh"; failed=1

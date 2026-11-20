@@ -277,7 +277,7 @@ Inside a grid, press the prefix (**Ctrl-Space** by default), then:
 | `p` | promote: make this pane the large top pane, the others below |
 | `g` | back to the even grid |
 | `z` | zoom the pane to the full window, or back |
-| `c` | new Claude in the current pane's folder |
+| `c` | new Claude: pick a folder the grid already uses; see [Adding a Claude](#adding-a-claude) |
 | `C` | new Claude in a folder you type |
 | `q` | close this grid (asks first) |
 | `d` | detach; `claude-grid` re-attaches |
@@ -299,6 +299,32 @@ click a pane to focus it.
 
 Each state has a symbol and a word, not only a color. The status bar also lists every pane
 that needs input.
+
+### Adding a Claude
+
+Press the prefix, then `c`, to pick the folder for a new Claude from the ones the grid already
+uses:
+
+```
+╭────────────── new Claude in grid main ───────────────╮
+│                                                      │
+│  bla  ~/development/foo/bla  focused · 2 panes  (1)  │
+│  bar  ~/development/foo/bar                     (2)  │
+│                                                      │
+│  other folder…                                  (o)  │
+│  cancel                                         (q)  │
+╰──────────────────────────────────────────────────────╯
+```
+
+The focused pane's folder comes first and starts selected, so `c` then `Enter` opens a new
+Claude next to the one you're in. A folder that several panes use is listed once. `other
+folder…` asks for any folder, with `Tab` completion; `~` is your home folder, and a relative
+path starts at the focused pane's folder. `C` opens the picker straight at that question.
+
+The new pane is a fresh session, not a copy of another pane's conversation. It starts the way
+`claude-grid DIR` would: with your settings and the folder's launcher rule, if any, but not
+the `--model` or `--` flags of the run that started the grid. If it can't start, the picker
+shows why.
 
 ### Sending a slash command to every Claude
 
