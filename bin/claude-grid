@@ -457,7 +457,8 @@ write_claude_settings() {
   {
     echo '{'
     echo '  "hooks": {'
-    hook SessionStart idle; echo ','
+    # Not on compact: Claude compacts in the middle of a turn too, while it's still working.
+    hook SessionStart idle 'startup|resume|clear|fork'; echo ','
     hook UserPromptSubmit working; echo ','
     hook PreToolUse tool '*'; echo ','
     hook PostToolUse working '*'; echo ','

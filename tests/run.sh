@@ -460,6 +460,7 @@ expect "refuses a line break" "can't contain line breaks" cg send --grid send "/
 y"
 expect "needs a grid when several run" 'several grids are running' cg send /reload-plugins
 expect "the hooks mark a session that ended" '"SessionEnd".*state\.sh. exited' cat "$STATE/claude-hooks.json"
+expect "a compaction mid-turn doesn't mark the pane idle" '"SessionStart": \[\{ "matcher": "startup\|resume\|clear\|fork"' cat "$STATE/claude-hooks.json"
 # Ctrl-D ends the stand-in without any hook, like a crash: the pane's own command marks it.
 tg send send-keys -t "$(pane_named new)" C-d
 check "a pane whose Claude ended without a hook is marked exited" wait_for sh -c "[ \"\$(tmux -L claude-grid-send show -pv -t '$(pane_named new)' @claude_hook_state)\" = exited ]"
