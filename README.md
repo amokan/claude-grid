@@ -359,8 +359,8 @@ A pane is skipped, and listed with the reason, when its Claude:
   prompt.
 - hasn't reported a state yet, for example while it's starting.
 
-A pane you interrupt with `Esc` reports no new state until its next prompt, so it can be listed
-as working until then.
+Claude Code runs no hook when you interrupt it with `Esc`, so that pane is listed as working
+until Claude Code reports it's waiting for input, which it does after about a minute.
 
 To send a command from a shell instead, for example in a script:
 

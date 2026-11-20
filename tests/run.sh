@@ -185,6 +185,25 @@ hook_with_path "$WORK/nojq" tool "$decoy"
 expect "without jq: a tool_name string inside the input isn't a question" '^working$' state_of
 hook_with_path "$WORK/nojq" tool '{"session_id": "s", "tool_name": "ExitPlanMode", "tool_input": {}}'
 expect "without jq: spaced JSON works too" '^waiting$' state_of
+hook_state_of() { tg main show -pv -t "$pane" @claude_hook_state; }
+idle_note='{"session_id":"s","hook_event_name":"Notification","message":"waiting","notification_type":"idle_prompt"}'
+perm_note='{"session_id":"s","hook_event_name":"Notification","message":"the \"notification_type\":\"idle_prompt\" text","notification_type":"permission_prompt"}'
+for path in "$PATH" "$WORK/nojq"; do
+  with="with jq"
+  [ "$path" = "$PATH" ] || with="without jq"
+  [ "$path" != "$PATH" ] || command -v jq >/dev/null || continue
+  hook_with_path "$path" working '{}'
+  hook_with_path "$path" notify "$idle_note"
+  expect "$with: a Claude idle after an interrupt is idle again" '^idle$' state_of
+  expect "$with: for the picker too" '^idle$' hook_state_of
+  hook_with_path "$path" 'done' '{}'
+  hook_with_path "$path" notify "$idle_note"
+  expect "$with: a done the user hasn't seen stays on the border" '^done$' state_of
+  expect "$with: while the hook state is idle" '^idle$' hook_state_of
+  hook_with_path "$path" notify "$perm_note"
+  expect "$with: a permission prompt is waiting, even with idle_prompt in its message" '^waiting$' hook_state_of
+done
+expect "a turn that ends in an error is done" '"StopFailure".*state\.sh. done' cat "$STATE/claude-hooks.json"
 
 section "Several grids"
 # A second "terminal": tmux won't attach without a TERM, which CI runners don't set.

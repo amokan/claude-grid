@@ -463,8 +463,9 @@ write_claude_settings() {
     hook PreToolUse tool '*'; echo ','
     hook PostToolUse working '*'; echo ','
     hook PermissionRequest waiting '*'; echo ','
-    hook Notification waiting 'permission_prompt|elicitation_dialog'; echo ','
+    hook Notification notify 'permission_prompt|elicitation_dialog|idle_prompt'; echo ','
     hook Stop 'done'; echo ','
+    hook StopFailure 'done'; echo ','
     hook SessionEnd exited; echo
     if [ -n "$statusline" ]; then
       echo '  },'
