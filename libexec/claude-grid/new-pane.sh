@@ -55,7 +55,7 @@ check_folder() {
   resolve_folder "$1" >/dev/null || { echo "$1 isn't a folder"; return 1; }
 }
 
-# The picker's height in lines, borders included; draw prints exactly this many.
+# The height the picker asks for, borders included. draw fits the popup it actually gets.
 picker_height() { echo $((8 + ${#DIRS[@]})); }
 
 open_picker() {
@@ -111,7 +111,7 @@ draw() {
   local width
   width="$(inner_width)"
   printf '\033[H\033[2J'
-  draw_items "$width" "0 ${#DIRS[@]}"
+  draw_items "$width" "0 ${#DIRS[@]}" $(($(screen_lines) - 2))
   draw_hint "$width"
 }
 

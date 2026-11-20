@@ -540,6 +540,21 @@ tg send set -g @cg_pickers "$dead"
 tg send run-shell -t "$(pane_named ready)" "#{q:@cg_libexec}/float.sh restyle $(pane_named ready)"
 check "a picker that was killed doesn't leave the grid faded" test "$(styles)" = "$before"
 check "and is dropped from the list" test -z "$(tg send show -gqv @cg_pickers)"
+# The last screen a picker drew: what follows its last clear-screen.
+last_screen() { perl -0777 -ne '@s = split /\e\[H\e\[2J/; $_ = $s[-1]; s/\e\[[0-9;?]*[A-Za-z]//g; s/\r//g; print' "$1"; }
+# Runs a picker on a terminal of the given size, feeding it the given keys.
+small_picker() {
+  local rows="$1" input="$2" script="$3"
+  shift 3
+  { printf '%b' "$input"; sleep 3; } | pty sh -c "stty rows $rows cols 70; exec env TMUX='$SOCKET_DIR/claude-grid-$GRID_UNDER_TEST,1,0' '$BASH_BIN' '$REPO/libexec/claude-grid/$script' menu \"\$@\"" _ "$@"
+}
+fits() { [ "$(last_screen "$1" | wc -l | tr -d ' ')" -lt "$2" ]; }
+GRID_UNDER_TEST=send
+small_picker 9 'jjj\033' send.sh "$(pane_named ready)" >"$WORK/small.out" 2>&1
+check "on a short popup the picker draws no more lines than it has" fits "$WORK/small.out" 9
+expect "the skipped panes shrink to one line" '⚠ 5 panes skipped' last_screen "$WORK/small.out"
+expect "and the list scrolls to keep the selected item, with a marker where it's cut" '↑ more' last_screen "$WORK/small.out"
+expect "the item moved to is shown" 'cancel +\(q\)' last_screen "$WORK/small.out"
 tg send kill-server
 write_config
 
@@ -574,7 +589,7 @@ write_config "FADE=99"
 newpicker '1x\033' >"$WORK/newp.out" 2>&1
 write_config
 one_line() { strip <"$1" | tr '\n' ' '; }
-expect "when claude-grid fails, the popup shows why" "Couldn.t start a Claude in .*FADE must be 0-90" one_line "$WORK/newp.out"
+expect "when claude-grid fails, the popup shows why" "Couldn.t start a Claude in .*FADE +must be 0-90" one_line "$WORK/newp.out"
 before="$(tg newp list-panes -s -t claude | wc -l | tr -d ' ')"
 (sleep 20 | TERM=xterm-256color pty tmux -L claude-grid-newp attach -t claude >/dev/null 2>&1 &)
 wait_for sh -c "[ -n \"\$(tmux -L claude-grid-newp list-clients -F '#{client_name}')\" ]"
@@ -584,6 +599,11 @@ check "prefix + c opens the picker over the faded grid" wait_for sh -c "! tmux -
 tg newp send-keys -K -c "$client" Enter
 check "and Enter adds a pane" wait_for sh -c "[ \$(tmux -L claude-grid-newp list-panes -s -t claude | wc -l) -gt $before ]"
 check "the fade comes off when it closes" wait_for sh -c "! tmux -L claude-grid-newp list-panes -s -t claude -F '#{window-active-style}' | grep -q 'dim='"
+GRID_UNDER_TEST=newp
+small_picker 6 '\033' new-pane.sh "$(npane b)" >"$WORK/small.out" 2>&1
+check "the folder picker fits a short popup too" fits "$WORK/small.out" 6
+screen_line() { last_screen "$1" | tr '\n' ' '; }
+expect "with the focused folder first, and a marker where it's cut" 'proj/b +focused.*↓ more' screen_line "$WORK/small.out"
 tg newp kill-server
 
 section "Hostile names and values"

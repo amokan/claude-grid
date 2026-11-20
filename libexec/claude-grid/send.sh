@@ -135,7 +135,8 @@ send_all() {
 
 MAX_SKIPPED=8
 
-# The picker's height in lines, borders included; draw prints exactly this many.
+# The height the picker asks for, borders included. The popup can end up smaller (a short
+# terminal, more panes skipped by the time it draws), so draw fits what it has instead.
 picker_height() {
   local shown=${#SKIPPED[@]}
   [ "$shown" -le "$MAX_SKIPPED" ] || shown=$((MAX_SKIPPED + 1))
@@ -157,20 +158,31 @@ open_picker() {
   open_popup "$width" "$(picker_height)" "send to Claudes in grid $(opt @cg_grid)" send.sh menu "$PANE" "$CLIENT"
 }
 
+# Lines: a blank one, ready, the skipped panes, the list (with its two blank lines), and the
+# hint (a blank line and the hint). The list gets its lines first; the skipped panes get what's
+# left, at least one line when any were skipped, ending in "and N more" when they don't all fit.
 draw() {
-  local width line shown=0
+  local width avail list skip shown=0 line
   width="$(inner_width)"
+  avail=$(($(screen_lines) - 4))
+  list=$((${#ITEMS[@]} + 2))
+  skip=${#SKIPPED[@]}
+  [ "$skip" -le "$MAX_SKIPPED" ] || skip=$((MAX_SKIPPED + 1))
+  [ "$skip" -le $((avail - list)) ] || skip=$((avail - list))
+  [ "$skip" -ge 1 ] || [ ${#SKIPPED[@]} = 0 ] || skip=1
+  [ "$skip" -ge 0 ] || skip=0
   printf '\033[H\033[2J\n'
   printf '  %s\n' "$(fit "ready: $(plural ${#READY[@]})" "$width")"
   for line in ${SKIPPED[@]+"${SKIPPED[@]}"}; do
     shown=$((shown + 1))
-    if [ "$shown" -gt "$MAX_SKIPPED" ]; then
-      printf '  %s%s%s\n' "$WARN" "⚠ and $((${#SKIPPED[@]} - MAX_SKIPPED)) more skipped" "$R"
+    if [ "$shown" = "$skip" ] && [ "$skip" -lt ${#SKIPPED[@]} ]; then
+      if [ "$skip" = 1 ]; then line="⚠ $(plural ${#SKIPPED[@]}) skipped"; else line="⚠ and $((${#SKIPPED[@]} - skip + 1)) more skipped"; fi
+      printf '  %s%s%s\n' "$WARN" "$(fit "$line" "$width")" "$R"
       break
     fi
     printf '  %s%s%s\n' "$WARN" "$(fit "⚠ skip $line" "$width")" "$R"
   done
-  draw_items "$width" "0 ${#COMMANDS[@]}"
+  draw_items "$width" "0 ${#COMMANDS[@]}" $((avail - skip))
   draw_hint "$width"
 }
 

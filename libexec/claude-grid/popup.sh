@@ -94,25 +94,63 @@ start_picker() {
   fade_grid
 }
 
-# The width lines can use inside the popup.
-inner_width() { echo $(($(tput cols 2>/dev/null || echo 60) - 4)); }
+# The popup's size: the width lines can use, and its height in lines. stty asks the terminal
+# itself, so it works without TERM; a terminal that reports no size gets a usable one instead.
+inner_width() {
+  local rows cols
+  read -r rows cols < <(stty size 2>/dev/null || echo "0 0")
+  [ "${cols:-0}" -ge 20 ] || cols=60
+  echo $((cols - 4))
+}
+screen_lines() {
+  local rows cols
+  read -r rows cols < <(stty size 2>/dev/null || echo "0 0")
+  [ "${rows:-0}" -ge 3 ] || rows=1000
+  echo "$rows"
+}
 
 # The list: ITEMS with their KEYS on the right and SELECTED highlighted. A blank line goes before
-# the item at each index in GAPS (a space-separated list).
+# the item at each index in GAPS (a space-separated list). It prints at most MAX lines: when the
+# list is longer, the part around the selected item, with ↑ more / ↓ more where it's cut.
+# Usage: draw_items WIDTH GAPS MAX
 ITEMS=()
 KEYS=()
 SELECTED=0
 draw_items() {
-  local width="$1" gaps=" $2 " i line pad key
+  local width="$1" gaps=" $2 " max="${3:-1000}" i line pad key rows=() selected_row=0 start n
   for i in "${!ITEMS[@]}"; do
-    case "$gaps" in *" $i "*) printf '\n' ;; esac
+    case "$gaps" in *" $i "*) rows+=("") ;; esac
     key="${KEYS[$i]}"
     [ -z "$key" ] || key="($key)"
     line="$(fit "${ITEMS[$i]}" $((width - 6)))"
     pad=$((width - 1 - ${#line} - ${#key}))
     [ "$pad" -ge 1 ] || pad=1
     line=" $line$(printf '%*s' "$pad" '')$key"
-    if [ "$i" = "$SELECTED" ]; then printf '  %s%s%s\n' "$SEL" "$line" "$R"; else printf '  %s\n' "$line"; fi
+    if [ "$i" = "$SELECTED" ]; then
+      selected_row=${#rows[@]}
+      rows+=("$SEL$line$R")
+    else
+      rows+=("$line")
+    fi
+  done
+  n=${#rows[@]}
+  [ "$max" -ge 1 ] || max=1
+  if [ "$n" -le "$max" ]; then
+    for line in "${rows[@]}"; do printf '  %s\n' "$line"; done
+    return
+  fi
+  # A window of max rows that keeps the selected row away from the cut edges when it can.
+  start=$((selected_row - (max - 1) / 2))
+  [ "$start" -le $((n - max)) ] || start=$((n - max))
+  [ "$start" -ge 0 ] || start=0
+  for ((i = start; i < start + max; i++)); do
+    if [ "$i" = "$start" ] && [ "$start" -gt 0 ] && [ "$i" != "$selected_row" ]; then
+      printf '  %s%s%s\n' "$DIM" " ↑ more" "$R"
+    elif [ "$i" = $((start + max - 1)) ] && [ $((start + max)) -lt "$n" ] && [ "$i" != "$selected_row" ]; then
+      printf '  %s%s%s\n' "$DIM" " ↓ more" "$R"
+    else
+      printf '  %s\n' "${rows[$i]}"
+    fi
   done
 }
 
