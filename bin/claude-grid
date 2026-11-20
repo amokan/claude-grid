@@ -164,13 +164,6 @@ menu_key_problem() {
   [ "$name" != "$(key_name "$prefix" 2>/dev/null)" ] || { echo "MENU_KEY $key is the prefix key"; return 1; }
 }
 
-# Prints why a picker command is invalid and fails, or succeeds silently. Each one is typed into
-# every ready pane and followed by Enter, so a line break would send part of it early.
-validate_slash_command() {
-  [[ "$1" != *[[:cntrl:]]* ]] || { echo "can't contain line breaks or other control characters"; return 1; }
-  [[ "$1" == /[![:space:]/]* ]] || { echo "must start with / and a command name, e.g. /reload-plugins"; return 1; }
-}
-
 # Prints why a launcher rule is invalid and fails, or succeeds silently.
 validate_launcher() {
   [[ "$1" != *[[:cntrl:]]* ]] || { echo "can't contain line breaks or other control characters"; return 1; }
@@ -184,9 +177,9 @@ done
 # Folders whose Claude must start through a project launcher instead of CLAUDE_COMMAND.
 # Each entry is "folder-glob|command"; claude-grid passes its hook flags in $CLAUDE_EXTRA_ARGS.
 LAUNCHERS=()
-# The commands the MENU_KEY picker offers. slash_command= lines in the config replace the whole
-# list, so the defaults can be removed or reordered too.
-readonly DEFAULT_SLASH_COMMANDS=("/reload-plugins" "/reload-skills")
+# The commands the MENU_KEY picker offers (validate_slash_command and the defaults are in
+# shared.sh, which send.sh uses too). slash_command= lines in the config replace the whole list,
+# so the defaults can be removed or reordered too.
 SLASH_COMMANDS=("${DEFAULT_SLASH_COMMANDS[@]}")
 
 trim() {

@@ -10,3 +10,15 @@ tmux_word() {
     *) printf '%s' "$1" ;;
   esac
 }
+
+# The commands the slash command picker offers when the config lists none. slash_command= lines
+# in the config replace the whole list.
+# shellcheck disable=SC2034 # read by the scripts that source this
+DEFAULT_SLASH_COMMANDS=("/reload-plugins" "/reload-skills")
+
+# Prints why a slash command can't be used and fails, or succeeds silently. It's typed into
+# every ready pane and followed by Enter, so a line break would send part of it early.
+validate_slash_command() {
+  [[ "$1" != *[[:cntrl:]]* ]] || { echo "can't contain line breaks or other control characters"; return 1; }
+  [[ "$1" == /[![:space:]/]* ]] || { echo "must start with / and a command name, e.g. /reload-plugins"; return 1; }
+}

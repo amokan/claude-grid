@@ -20,13 +20,6 @@ CLIENT="${3:-}"
 # shellcheck source=libexec/claude-grid/popup.sh
 . "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/popup.sh"
 
-DEFAULT_COMMANDS=("/reload-plugins" "/reload-skills")
-
-# Prints why a command can't be sent and fails, or succeeds silently.
-check_command() {
-  [[ "$1" != *[[:cntrl:]]* ]] || { echo "can't contain line breaks or other control characters"; return 1; }
-  [[ "$1" == /[![:space:]/]* ]] || { echo "must start with / and a command name, e.g. /reload-plugins"; return 1; }
-}
 
 # The commands the picker offers, one per line, from the file claude-grid writes for the grid.
 COMMANDS=()
@@ -35,10 +28,10 @@ load_commands() {
   file="$(opt @cg_state)/slash-commands"
   if [ -f "$file" ]; then
     while IFS= read -r line || [ -n "$line" ]; do
-      check_command "$line" >/dev/null && COMMANDS+=("$line")
+      validate_slash_command "$line" >/dev/null && COMMANDS+=("$line")
     done <"$file"
   fi
-  [ ${#COMMANDS[@]} -gt 0 ] || COMMANDS=("${DEFAULT_COMMANDS[@]}")
+  [ ${#COMMANDS[@]} -gt 0 ] || COMMANDS=("${DEFAULT_SLASH_COMMANDS[@]}")
 }
 
 # Claude's prompt is the lowest screen line with ❯. It's empty, or shows a dimmed suggestion in a
@@ -101,7 +94,7 @@ plural() { if [ "$1" = 1 ]; then echo "1 pane"; else echo "$1 panes"; fi; }
 # Sends the command to the ready panes and prints one line saying what happened.
 send_all() {
   local command="$1" id skipped="" msg reason ready
-  if ! msg="$(check_command "$command")"; then
+  if ! msg="$(validate_slash_command "$command")"; then
     echo "not sent: the command $msg"
     return 2
   fi
@@ -191,7 +184,7 @@ choose() {
   case "$1" in
     "$((${#ITEMS[@]} - 1))") exit 0 ;;
     "${#COMMANDS[@]}")
-      ask_line "Slash command to send (Enter on an empty line goes back):" check_command
+      ask_line "Slash command to send (Enter on an empty line goes back):" validate_slash_command
       item="$ANSWER"
       if [ -z "$item" ]; then survey; return 0; fi ;;
   esac
@@ -219,7 +212,7 @@ case "$MODE" in
   menu) run_picker ;;
   send)
     [ -n "${3:-}" ] || { echo "usage: send.sh send <pane-id> <command>" >&2; exit 2; }
-    if ! msg="$(check_command "$3")"; then echo "$3: $msg" >&2; exit 2; fi
+    if ! msg="$(validate_slash_command "$3")"; then echo "$3: $msg" >&2; exit 2; fi
     send_all "$3" ;;
   *) echo "usage: send.sh open|menu|send <pane-id> ..." >&2; exit 2 ;;
 esac
