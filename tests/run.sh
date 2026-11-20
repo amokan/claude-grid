@@ -129,6 +129,14 @@ if command -v jq >/dev/null; then
   check "the hooks file is valid JSON" env -u XDG_CONFIG_HOME -u XDG_STATE_HOME jq -e '.hooks.PreToolUse[0].hooks[0].command | test("state.sh. tool$")' "$STATE/claude-hooks.json"
 fi
 expect "the grid knows its name" '^main$' tg main show -gqv @cg_grid
+if command -v jq >/dev/null; then
+  # bash 3.2 can't eval this function's text, so it's read from a file.
+  sed -n '/^json_escape() [{]/,/^[}]/p' "$REPO/bin/claude-grid" >"$WORK/json_escape.sh"
+  # shellcheck disable=SC2016 # $1 and $2 are for the inner bash
+  json_round_trip() { "$BASH_BIN" -c '. "$1"; printf "\"%s\"" "$(json_escape "$2")"' _ "$WORK/json_escape.sh" "$1" | env -u XDG_CONFIG_HOME -u XDG_STATE_HOME jq -j .; }
+  odd_value="$(printf 'a\\b"c\td\ne\001f')"
+  check "the hooks file escapes backslashes, quotes and control characters" test "$(json_round_trip "$odd_value")" = "$odd_value"
+fi
 expect "the prefix is applied" '^C-Space$' tg main show -gqv prefix
 expect "ls shows the grid and its panes" 'grid main \(detached\)' cg ls
 

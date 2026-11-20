@@ -374,7 +374,17 @@ tmux_quote() {
 # Quotes a value for sh.
 sh_quote() { printf "'%s'" "${1//\'/\'\\\'\'}"; }
 
-json_escape() { local s="${1//\\/\\\\}"; printf '%s' "${s//\"/\\\"}"; }
+# Escapes a value for a JSON string: backslashes, quotes, and control characters as \u00XX (a
+# folder name can hold any of them).
+json_escape() {
+  local s="${1//\\/\\\\}" i c
+  s="${s//\"/\\\"}"
+  for ((i = 1; i < 32; i++)); do
+    printf -v c '%b' "\\0$(printf '%03o' "$i")"
+    case "$s" in *"$c"*) s="${s//"$c"/$(printf '\\u%04x' "$i")}" ;; esac
+  done
+  printf '%s' "$s"
+}
 
 hook() {
   local event="$1" state="$2" matcher="${3:-}"
