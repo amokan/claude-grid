@@ -1434,6 +1434,9 @@ fi
 # Launchers get the flags split on spaces, so a value with a space would arrive in pieces.
 for dir in ${dirs[@]+"${dirs[@]}"}; do
   launcher_for "$(cd "$dir" && pwd)" >/dev/null || continue
+  # The hooks file's path is one of those flags (--settings).
+  [[ "$STATE_DIR" != *[[:space:]]* ]] ||
+    die "$dir starts through a launcher, which can't receive claude-grid's settings in \"$STATE_DIR\": \$CLAUDE_EXTRA_ARGS splits on spaces. Set XDG_STATE_HOME to a folder without spaces."
   for arg in ${MODEL:+"$MODEL"} ${CLAUDE_ARGS[@]+"${CLAUDE_ARGS[@]}"}; do
     [[ "$arg" != *[[:space:]]* ]] ||
       die "$dir starts through a launcher, which can't receive \"$arg\": \$CLAUDE_EXTRA_ARGS splits on spaces"

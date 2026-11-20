@@ -349,6 +349,9 @@ tg mini kill-server
 expect "a value with a space is refused for launcher panes" 'launcher, which can.t receive "be terse"' \
   cg --grid spaced "$WORK/proj/launched" -- --append-system-prompt "be terse"
 check "and no grid starts" sh -c "! tmux -L claude-grid-spaced has-session 2>/dev/null"
+expect "a settings folder with a space is refused for launcher panes" "can.t receive claude-grid.s settings in \"$WORK/state dir/claude-grid\"" \
+  env XDG_STATE_HOME="$WORK/state dir" "$BASH_BIN" "$REPO/bin/claude-grid" --grid spaced "$WORK/proj/launched"
+check "and no grid starts either" sh -c "! tmux -L claude-grid-spaced has-session 2>/dev/null"
 expect "the check covers the default folder of a new grid too" 'launcher, which can.t receive "be terse"' \
   sh -c "cd '$WORK/proj/launched' && '$BASH_BIN' '$REPO/bin/claude-grid' --grid spaced -- --append-system-prompt 'be terse'"
 write_config
