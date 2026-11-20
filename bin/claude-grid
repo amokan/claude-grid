@@ -776,8 +776,11 @@ cmd_ls() {
   for name in $names; do
     if grid_attached "$name"; then state=attached; else state=detached; fi
     echo "${UI_BOLD}grid $name${UI_RESET} $(ui_dim "($state)")"
+    # Folder names can hold control characters, which would reach the terminal as escape
+    # sequences (a new window title, a clipboard write), so they're shown as ?.
     tg "$name" list-panes -s -t "$SESSION" \
-      -F '  #{pane_index}  #{?#{@claude_state},#{@claude_state},idle}  #{@claude_name}  #{pane_current_path}'
+      -F '  #{pane_index}  #{?#{@claude_state},#{@claude_state},idle}  #{@claude_name}  #{pane_current_path}' |
+      LC_ALL=C tr '\000-\011\013-\037\177' '?'
   done
 }
 

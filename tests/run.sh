@@ -533,6 +533,12 @@ mkdir -p "$WORK/proj/x#{session_name}y"
 (cd "$WORK/proj" && cg --grid hash 'x#{session_name}y' >/dev/null 2>&1)
 expect "a # in a folder name isn't expanded by tmux" '/x#\{session_name\}y$' tg hash display -p -t claude '#{pane_current_path}'
 tg hash kill-server
+esc_dir="$WORK/proj/esc$(printf '\033')]0;pwned$(printf '\007')"
+mkdir -p "$esc_dir"
+(cd "$WORK/proj" && cg --grid esc "$esc_dir" >/dev/null 2>&1)
+expect "ls shows control characters in a folder name as ?" 'esc\?\]0;pwned\?' cg ls
+check "and prints no escape character" test -z "$(cg ls | LC_ALL=C grep "$(printf '\033')")"
+tg esc kill-server
 mkdir -p "$WORK/proj/semi;"
 (cd "$WORK/proj" && cg --grid semi 'semi;' >/dev/null 2>&1)
 expect "a folder ending in ; starts its pane there" '/semi;$' tg semi display -p -t claude '#{pane_current_path}'
