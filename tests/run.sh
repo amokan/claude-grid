@@ -482,6 +482,28 @@ check "prefix + / opens the picker over the faded grid" wait_for sh -c "[ \"\$(t
 tg send send-keys -K -c "$client" Escape
 # shellcheck disable=SC2016 # $1 and the $(...) are for the inner sh
 check "Esc in the popup closes it and puts the fade back" wait_for sh -c '[ "$(tmux -L claude-grid-send list-panes -s -t claude -F "#{pane_id} #{pane_floating_flag} [#{window-style}] [#{window-active-style}]")" = "$1" ]' _ "$before"
+all_faded() { [ "$(tg send list-panes -s -t claude -F '#{window-style}|#{window-active-style}' | grep -c 'dim=.*|.*dim=')" = 7 ]; }
+# A picker that stays open for a while: Esc arrives after the given number of seconds.
+open_picker_for() { { sleep "$1"; printf '\033'; sleep 1; } | pty env TMUX="$SOCKET_DIR/claude-grid-send,1,0" "$BASH_BIN" "$REPO/libexec/claude-grid/send.sh" menu "$(pane_named ready)" >/dev/null 2>&1; }
+open_picker_for 3 &
+sleep 1
+tg send run-shell -t "$(pane_named ready)" "#{q:@cg_libexec}/float.sh refit $(pane_named ready)"
+check "a resize while the picker is open keeps the whole grid faded" all_faded
+wait
+check "and closing it still puts the float's fade back" test "$(styles)" = "$before"
+open_picker_for 4 &
+sleep 0.5
+open_picker_for 1.5 &
+sleep 2.5
+check "with two pickers open, closing one keeps the fade for the other" all_faded
+wait
+check "closing both puts the float's fade back" test "$(styles)" = "$before"
+dead=99999
+while kill -0 "$dead" 2>/dev/null; do dead=$((dead + 1)); done
+tg send set -g @cg_pickers "$dead"
+tg send run-shell -t "$(pane_named ready)" "#{q:@cg_libexec}/float.sh restyle $(pane_named ready)"
+check "a picker that was killed doesn't leave the grid faded" test "$(styles)" = "$before"
+check "and is dropped from the list" test -z "$(tg send show -gqv @cg_pickers)"
 tg send kill-server
 write_config
 

@@ -1,13 +1,15 @@
 #!/usr/bin/env bash
 # Floats a Claude pane over the center of the grid, keeping at most one pane floating.
-# While a pane floats, the grid panes behind it are faded.
+# While a pane floats, the grid panes behind it are faded. While a picker (send.sh, new-pane.sh)
+# is open, every pane is faded. restyle is the only place that sets these styles.
 # Every command takes the pane it acts on, which also identifies the window.
 # Usage: float.sh toggle <pane-id>    float the pane, or put it back if it already floats
 #        float.sh focus <pane-id>     float the pane (used on focus when auto-float is on)
 #        float.sh sink <pane-id>      put every floating pane in that window back into the grid
 #        float.sh auto <pane-id>      turn auto-float on focus on or off
 #        float.sh refit <pane-id>     resize floating panes in that window to the current window size
-#        float.sh restyle <pane-id>   re-apply the fade in that window (after adding panes)
+#        float.sh restyle <pane-id>   re-apply the fade in that window (after adding panes, or
+#                                     when a picker opens or closes)
 
 [ -n "${2:-}" ] || { echo "usage: float.sh toggle|focus|sink|auto|refit|restyle <pane-id>" >&2; exit 1; }
 readonly PANE="$2"
@@ -58,10 +60,31 @@ refit() {
   done < <(panes)
 }
 
+# Whether a picker is open. Each picker adds its process id to @cg_pickers while it's open; one
+# that ended without removing itself (killed, say) is dropped here.
+picker_open() {
+  local listed alive="" pid
+  listed="$(tmux show -gqv @cg_pickers)"
+  for pid in $listed; do
+    if kill -0 "$pid" 2>/dev/null; then alive="${alive:+$alive }$pid"; fi
+  done
+  [ "$alive" = "$listed" ] || tmux set -g @cg_pickers "$alive"
+  [ -n "$alive" ]
+}
+
+# A picker fades every pane, the focused one too (window-active-style); a floating pane fades
+# the grid behind it.
 restyle() {
-  local pane floating any_floating=0
+  local pane floating any_floating=0 picker=0
+  picker_open && picker=1
   panes | grep -q ' 1$' && any_floating=1
   while read -r pane floating; do
+    if [ "$picker" = 1 ] && [ "$FADE" -gt 0 ]; then
+      tmux set -p -t "$pane" window-style "fg=$TEXT dim=$FADE"
+      tmux set -p -t "$pane" window-active-style "fg=$TEXT dim=$FADE"
+      continue
+    fi
+    tmux set -p -u -t "$pane" window-active-style
     if [ "$any_floating" = 1 ] && [ "$floating" = 0 ] && [ "$FADE" -gt 0 ]; then
       tmux set -p -t "$pane" window-style "fg=$TEXT dim=$FADE"
     else

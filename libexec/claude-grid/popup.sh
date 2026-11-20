@@ -55,28 +55,26 @@ open_popup() {
     -T "#[align=centre fg=$active bold] $title " "$(tmux_word "$command")"
 }
 
-# Fades every pane, the active one included, the way a floating pane fades the grid.
-fade_grid() {
-  local fade text id
-  fade="$(opt @cg_fade)"
-  text="$(opt @cg_color_text)"
-  [ "${fade:-0}" -gt 0 ] || return 0
-  for id in $(tmux list-panes -s -t "$PANE" -F '#{pane_id}'); do
-    tmux set -p -t "$id" window-style "fg=${text:-#d0d0d0} dim=$fade"
-    tmux set -p -t "$id" window-active-style "fg=${text:-#d0d0d0} dim=$fade"
-  done
-}
-
-# Undoes fade_grid, then puts back the fade a floating pane gives the grid.
-unfade_grid() {
-  local id window
-  for id in $(tmux list-panes -s -t "$PANE" -F '#{pane_id}' 2>/dev/null); do
-    tmux set -p -u -t "$id" window-active-style
-    tmux set -p -u -t "$id" window-style
-  done
+# float.sh restyle sets every fade, so a resize or a float while the picker is open keeps it.
+restyle_grid() {
+  local window
   for window in $(tmux list-windows -t "$PANE" -F '#{window_id}' 2>/dev/null); do
     "$(opt @cg_libexec)/float.sh" restyle "$(tmux list-panes -t "$window" -F '#{pane_id}' | head -n 1)"
   done
+}
+
+# Fades every pane while this picker is open: it lists itself in @cg_pickers.
+fade_grid() {
+  tmux set -g @cg_pickers "$(opt @cg_pickers) $$"
+  restyle_grid
+}
+
+# Takes this picker off @cg_pickers. The grid stays faded while another picker is open.
+unfade_grid() {
+  local pid kept=""
+  for pid in $(opt @cg_pickers); do [ "$pid" = "$$" ] || kept="${kept:+$kept }$pid"; done
+  tmux set -g @cg_pickers "$kept" 2>/dev/null
+  restyle_grid
 }
 
 # Sets up the popup's terminal and fades the grid; both are undone however the script ends.
