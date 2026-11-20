@@ -117,6 +117,13 @@ for version in "tmux 3.7" "tmux 3.7b" "tmux 2.9" "tmux next-3.4"; do
   check "tmux version check refuses $version" too_old "$version"
 done
 
+# shellcheck disable=SC2016 # $1 and $2 are for the inner bash
+fitted() { "$BASH_BIN" -c '. "$1/libexec/claude-grid/popup.sh"; fit "$2" "$3"; printf "|"; fit_path "$2" "$3"' _ "$REPO" "$1" "$2" 2>&1; }
+expect "a picker cuts long text and paths to fit" '^abc…\|…def$' fitted abcdef 4
+expect "and prints nothing when there's no room" '^\|$' fitted abcdef 0
+expect "even with a negative width" '^\|$' fitted abcdef -3
+expect "one column fits only the …" '^…\|…$' fitted abcdef 1
+
 section "Starting a grid"
 (cd "$WORK/proj" && cg a b:2 >/dev/null 2>&1)
 check "grid main is running" tg main has-session -t claude

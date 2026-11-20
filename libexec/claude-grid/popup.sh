@@ -31,14 +31,18 @@ is_light() {
   [ $(( (299 * 0x${h:0:2} + 587 * 0x${h:2:2} + 114 * 0x${h:4:2}) / 1000 )) -gt 140 ]
 }
 
-# Cuts text to a number of characters, ending in … when it's cut.
+# Cuts text to a number of characters, ending in … when it's cut. On a popup too narrow for any
+# text the number can be 0 or less, which prints nothing.
 fit() {
-  if [ "${#1}" -gt "$2" ]; then printf '%s…' "${1:0:$(($2 - 1))}"; else printf '%s' "$1"; fi
+  if [ "$2" -lt 1 ]; then return
+  elif [ "${#1}" -le "$2" ]; then printf '%s' "$1"
+  else printf '%s…' "${1:0:$(($2 - 1))}"; fi
 }
 
 # The same for a path, cutting the start instead, so the folder's own name stays: …/foo/bla.
 fit_path() {
-  if [ "$2" -lt 2 ]; then printf '…'
+  if [ "$2" -lt 1 ]; then return
+  elif [ "$2" -lt 2 ]; then printf '…'
   elif [ "${#1}" -gt "$2" ]; then printf '…%s' "${1:$((${#1} - $2 + 1))}"
   else printf '%s' "$1"; fi
 }
