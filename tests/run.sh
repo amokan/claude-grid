@@ -406,6 +406,11 @@ expect "show marks changed settings" '^\* THEME +nord$' cg config show
 expect "remove-launcher removes the rule" 'removed launcher \*/my_project' cg config remove-launcher '*/my_project'
 check "and it's gone from the file" sh -c "! grep -q '^launcher=' '$CONFIG'"
 expect "remove-launcher of a missing rule fails" 'no launcher for \*/nope' cg config remove-launcher '*/nope'
+cg config add-launcher "'*/quoted" "run it'" >/dev/null 2>&1
+cg config set FADE=41 >/dev/null 2>&1
+expect "a launcher rule in quotes survives a save and reload" "launcher +'\*/quoted → run it'" cg config show
+cg config remove-launcher "'*/quoted" >/dev/null 2>&1
+cg config unset FADE >/dev/null 2>&1
 expect "unknown config commands are refused" 'unknown config command: bogus' cg config bogus
 write_config
 expect "add-command adds to the picker" 'added /compact keep the plan to the picker' cg config add-command '/compact keep the plan'

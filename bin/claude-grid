@@ -351,11 +351,11 @@ write_config() {
     done
     if [ ${#LAUNCHERS[@]} -gt 0 ]; then
       printf '\n# Folders whose Claude starts through a project launcher: folder-glob|command\n'
-      for launcher in "${LAUNCHERS[@]}"; do echo "launcher=$launcher"; done
+      for launcher in "${LAUNCHERS[@]}"; do echo "launcher=$(config_value "$launcher")"; done
     fi
     if slash_commands_changed; then
       printf '\n# The commands the MENU_KEY picker offers, in order. These lines replace the defaults.\n'
-      for value in ${SLASH_COMMANDS[@]+"${SLASH_COMMANDS[@]}"}; do echo "slash_command=$value"; done
+      for value in ${SLASH_COMMANDS[@]+"${SLASH_COMMANDS[@]}"}; do echo "slash_command=$(config_value "$value")"; done
     fi
   } >"$tmp"
   mv "$tmp" "$CONFIG_FILE"
