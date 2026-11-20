@@ -828,9 +828,9 @@ cmd_send() {
   fi
   valid_grid_name "$target" || die "not a grid name: $target"
   grid_running "$target" || die "no grid named $target is running"
-  # send.sh runs plain tmux commands, which find the grid's server through $TMUX.
+  # send.sh finds the grid's server through CG_SOCKET.
   socket="$(tg "$target" display -p -t "$SESSION" '#{socket_path}')"
-  TMUX="$socket,0,0" "$LIBEXEC/send.sh" send "$(tg "$target" display -p -t "$SESSION" '#{pane_id}')" "$command"
+  CG_SOCKET="$socket" "$LIBEXEC/send.sh" send "$(tg "$target" display -p -t "$SESSION" '#{pane_id}')" "$command"
 }
 
 cmd_attach() {

@@ -498,6 +498,11 @@ expect "refuses a command without a /" 'must start with /' cg send --grid send r
 expect "refuses a line break" "can't contain line breaks" cg send --grid send "/x
 y"
 expect "needs a grid when several run" 'several grids are running' cg send /reload-plugins
+comma_dir="$SOCKETS/a,b"
+mkdir -p "$comma_dir"
+(cd "$WORK/proj" && env TMUX_TMPDIR="$comma_dir" "$BASH_BIN" "$REPO/bin/claude-grid" --grid comma a >/dev/null 2>&1)
+expect "send reaches a grid whose socket path has a comma" 'sent /x to no pane; skipped 1:a' env TMUX_TMPDIR="$comma_dir" "$BASH_BIN" "$REPO/bin/claude-grid" send --grid comma /x
+tmux -S "$comma_dir/tmux-$(id -u)/claude-grid-comma" kill-server 2>/dev/null
 expect "the hooks mark a session that ended" '"SessionEnd".*state\.sh. exited' cat "$STATE/claude-hooks.json"
 expect "a compaction mid-turn doesn't mark the pane idle" '"SessionStart": \[\{ "matcher": "startup\|resume\|clear\|fork"' cat "$STATE/claude-hooks.json"
 # Ctrl-D ends the stand-in without any hook, like a crash: the pane's own command marks it.

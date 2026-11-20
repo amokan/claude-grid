@@ -6,6 +6,13 @@
 # shellcheck source=libexec/claude-grid/shared.sh
 . "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/shared.sh"
 
+# Run inside the grid (its key bindings and popups), tmux finds the grid's server through $TMUX.
+# `claude-grid send` runs send.sh from outside and names the server in CG_SOCKET instead: $TMUX
+# can't hold a socket path with a comma in it.
+if [ -n "${CG_SOCKET:-}" ]; then
+  tmux() { command tmux -S "$CG_SOCKET" "$@"; }
+fi
+
 opt() { tmux show -gqv "$1"; }
 
 # Character counts and cuts need a UTF-8 locale, or "…" counts as 3.
