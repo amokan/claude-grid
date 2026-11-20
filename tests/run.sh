@@ -522,10 +522,20 @@ mkdir -p "$WORK/proj/x#{session_name}y"
 (cd "$WORK/proj" && cg --grid hash 'x#{session_name}y' >/dev/null 2>&1)
 expect "a # in a folder name isn't expanded by tmux" '/x#\{session_name\}y$' tg hash display -p -t claude '#{pane_current_path}'
 tg hash kill-server
-tg main select-pane -t "$pane" -T '#[fg=red bg=#E69F00] fake NEEDS INPUT'
-check "a pane title can't restyle the border" sh -c "! tmux -L claude-grid-main display -p -t '$pane' '#{E:pane-border-format}' | grep -q '#\[fg=red'"
-expect "the title still shows, without its styling" '\[fg=red bg=#E69F00\] fake NEEDS INPUT' tg main display -p -t "$pane" '#{E:pane-border-format}'
+# tmux draws #[...] as a style and ## as a #, so a #[ is a style only after an odd run of #.
+unstyled() { ! tg main display -p -t "$pane" "$1" | perl -ne '$f = 1 if /(?<!#)(?:##)*#\[fg=red/; END { exit !$f }'; }
+for title in '#[fg=red bg=#E69F00] fake NEEDS INPUT' '##[fg=red bg=#E69F00] fake NEEDS INPUT'; do
+  tg main select-pane -t "$pane" -T "$title"
+  check "a pane title can't restyle the border: $title" unstyled '#{E:pane-border-format}'
+  expect "the title still shows: $title" 'fake NEEDS INPUT' tg main display -p -t "$pane" '#{E:pane-border-format}'
+done
 tg main select-pane -t "$pane" -T 'claude'
+tg main set -p -t "$pane" @claude_name '##[fg=red]x'
+tg main set -p -t "$pane" @claude_state waiting
+check "a folder name can't restyle the border" unstyled '#{E:pane-border-format}'
+check "or the status bar" unstyled '#{E:status-left}'
+tg main set -p -t "$pane" @claude_name a
+tg main set -p -t "$pane" @claude_state idle
 odd="$WORK/c#Tdir"
 mkdir -p "$odd"
 cp -R "$REPO/bin" "$REPO/libexec" "$odd/"
