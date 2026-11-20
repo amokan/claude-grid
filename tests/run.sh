@@ -423,6 +423,13 @@ expect "remove-command of a missing one fails" "/nope isn't in the picker" cg co
 write_config
 expect "the picker key is bound after the prefix" 'send\.sh open' tg main list-keys -T prefix /
 expect "the status bar shows it" '/: send' tg main display -p '#{E:status-right}'
+# MENU_KEY may not take a key claude-grid binds, so GRID_KEYS has to list every one of them.
+grid_keys="$(sed -n 's/^readonly GRID_KEYS="\(.*\)"$/\1/p' "$REPO/bin/claude-grid")"
+unlisted=""
+while read -r key; do
+  case " $grid_keys " in *" $key "*) ;; *) unlisted="$unlisted $key" ;; esac
+done < <(awk '$1 == "bind" { i = 2; while ($i ~ /^-/) { if ($i == "-n" || $i == "-T") next; i++ }; print $i }' "$REPO/libexec/claude-grid/tmux.conf")
+if [ -n "$grid_keys" ] && [ -z "$unlisted" ]; then pass "GRID_KEYS lists every key tmux.conf binds after the prefix"; else fail "GRID_KEYS lists every key tmux.conf binds after the prefix" "not in GRID_KEYS:$unlisted"; fi
 expect "MENU_KEY refuses a grid key" 'MENU_KEY is already a claude-grid or tmux key' cg config set MENU_KEY=f
 expect "MENU_KEY refuses a key tmux doesn't know" "doesn't know the key C-Nope" cg config set MENU_KEY=C-Nope
 expect "MENU_KEY refuses a grid key spelled in another case" 'MENU_KEY is already a claude-grid or tmux key' cg config set MENU_KEY=escape
