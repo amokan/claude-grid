@@ -309,10 +309,15 @@ expect "a theme sets the colors" '#EBCB8B' cg colors
 expect "a COLOR_ line overrides the theme" '#123456' cg colors
 for bad in "FADE=95|FADE must be 0-90" "THEME=nope|THEME must be one of" "BOGUS=1|unknown setting BOGUS" \
   "launcher=nopipe|launcher must look like" "just words|expected KEY=value" "COLOR_TEXT=red|COLOR_TEXT must look like #RRGGBB" \
-  "slash_command=reload|slash_command must start with /" "MENU_KEY=q|MENU_KEY is already a claude-grid or tmux key"; do
+  "slash_command=reload|slash_command must start with /" "MENU_KEY=q|MENU_KEY is already a claude-grid or tmux key" \
+  "MENU_KEY=ENTER|MENU_KEY is already a claude-grid or tmux key" "MENU_KEY=c-space|MENU_KEY c-space is the prefix key"; do
   write_config "${bad%%|*}"
   expect "rejects ${bad%%|*}" "config:2: ${bad#*|}" cg colors
 done
+write_config "PREFIX=/"
+expect "a PREFIX that is the default MENU_KEY says what to change" 'PREFIX / is also the default MENU_KEY; set MENU_KEY to another key, or off' cg colors
+write_config "PREFIX=/" "MENU_KEY=off"
+check "which is fine with MENU_KEY=off" cg colors
 mkdir -p "$XDG_CONFIG_HOME/claude-grid/themes"
 printf 'COLOR_WAITING=#ff0000\n' >"$XDG_CONFIG_HOME/claude-grid/themes/mine.theme"
 write_config "THEME=mine"
@@ -385,6 +390,10 @@ expect "the picker key is bound after the prefix" 'send\.sh open' tg main list-k
 expect "the status bar shows it" '/: send' tg main display -p '#{E:status-right}'
 expect "MENU_KEY refuses a grid key" 'MENU_KEY is already a claude-grid or tmux key' cg config set MENU_KEY=f
 expect "MENU_KEY refuses a key tmux doesn't know" "doesn't know the key C-Nope" cg config set MENU_KEY=C-Nope
+expect "MENU_KEY refuses a grid key spelled in another case" 'MENU_KEY is already a claude-grid or tmux key' cg config set MENU_KEY=escape
+expect "MENU_KEY refuses the prefix, however it's spelled" 'MENU_KEY C-space is the prefix key' cg config set MENU_KEY=C-space
+expect "PREFIX and MENU_KEY set together are checked as a pair" 'MENU_KEY C-a is the prefix key' cg config set PREFIX=C-a MENU_KEY=C-a
+check "and nothing was saved" sh -c "! grep -q '^MENU_KEY=\|^PREFIX=' '$CONFIG'"
 cg config set MENU_KEY=m >/dev/null 2>&1
 expect "a new MENU_KEY moves the binding" 'send\.sh open' tg main list-keys -T prefix m
 expect "and the old key gets tmux's own binding back" 'list-keys -1N' tg main list-keys -T prefix /
