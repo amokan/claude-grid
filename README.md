@@ -267,6 +267,7 @@ Inside a grid, press the prefix (**Ctrl-Space** by default), then:
 | Key | |
 |---|---|
 | `a` | jump to the first session that needs input (or, if none, the first finished one) |
+| `/` | send a slash command to every ready Claude; see [Sending a slash command to every Claude](#sending-a-slash-command-to-every-claude) |
 | `1`–`9` | go to pane N |
 | arrows | step between panes |
 | `f` | float the focused pane over the grid, or put it back |
@@ -294,9 +295,67 @@ click a pane to focus it.
 | `● working` | Claude is working |
 | `✓ done` | Claude finished its turn |
 | `○` | idle, or you've looked at it since it finished |
+| `○ exited` | Claude has exited and the pane is a shell |
 
 Each state has a symbol and a word, not only a color. The status bar also lists every pane
 that needs input.
+
+### Sending a slash command to every Claude
+
+After you change a plugin or a skill, every session needs `/reload-plugins` or `/reload-skills`.
+Press the prefix, then `/`, to open a picker over the faded grid:
+
+```
+╭──────────── send to Claudes in grid main ─────────────╮
+│ ready: 4 panes                                        │
+│ ⚠ skip 3:api (waiting on a dialog)                    │
+│ ⚠ skip 5:web (working)                                │
+│                                                       │
+│  /reload-plugins                                  (1) │
+│  /reload-skills                                   (2) │
+│                                                       │
+│  custom…                                          (c) │
+│  cancel                                           (q) │
+╰───────────────────────────────────────────────────────╯
+```
+
+Pick a command with the arrows or `j`/`k` and `Enter`, or press its key. `custom…` asks for any
+slash command. `Esc` closes the picker without sending anything. claude-grid types the command
+into every ready pane, presses `Enter`, and shows on the status bar where it went.
+
+A pane is skipped, and listed with the reason, when its Claude:
+
+- is waiting on a dialog: `Enter` would answer it. This still counts after you've looked at the
+  pane and the border went back to `○`.
+- is working.
+- has exited, so the text would run in the pane's shell.
+- has text you haven't sent in its prompt: the command would be added to it and sent as one
+  prompt.
+- hasn't reported a state yet, for example while it's starting.
+
+A pane you interrupt with `Esc` reports no new state until its next prompt, so it can be listed
+as working until then.
+
+To send a command from a shell instead, for example in a script:
+
+```sh
+claude-grid send /reload-plugins             # the grid you're in, or the only one running
+claude-grid send --grid review /reload-skills
+```
+
+It prints the same summary and exits with status 1 when no pane was ready.
+
+Change the picker's commands with `claude-grid config` (`SLASH_COMMANDS`), or:
+
+```sh
+claude-grid config add-command '/compact keep the test plan'
+claude-grid config remove-command /reload-skills
+```
+
+The first change writes the whole list to your settings, defaults included, so you can also
+remove or reorder the defaults. In the file it's one `slash_command=` line per command, in order.
+`MENU_KEY` changes the key, and `MENU_KEY=off` leaves `/` as tmux's own key (describe a key
+binding).
 
 ### More than one grid
 
@@ -340,7 +399,9 @@ setting with its default.
 | `MINIMAL_STATUS` | `false` | give new panes a one-line statusLine; see [A shorter statusLine](#a-shorter-statusline) |
 | `MINIMAL_STATUS_COMMAND` | empty | the statusLine command for minimal-status panes; empty uses claude-grid's one-liner |
 | `PRECHECK` | empty | a command run before a new grid starts; see [Precheck script](#precheck-script) |
+| `MENU_KEY` | `/` | the key after the prefix that opens the slash command picker; `off` for none |
 | `launcher=` | none | see [Project launchers](#project-launchers) |
+| `slash_command=` | `/reload-plugins`, `/reload-skills` | the picker's commands; see [Sending a slash command to every Claude](#sending-a-slash-command-to-every-claude) |
 
 ### Themes
 

@@ -308,7 +308,8 @@ write_config "THEME=nord" 'COLOR_ACTIVE="#123456"' "  FADE = 40  " "# a comment"
 expect "a theme sets the colors" '#EBCB8B' cg colors
 expect "a COLOR_ line overrides the theme" '#123456' cg colors
 for bad in "FADE=95|FADE must be 0-90" "THEME=nope|THEME must be one of" "BOGUS=1|unknown setting BOGUS" \
-  "launcher=nopipe|launcher must look like" "just words|expected KEY=value" "COLOR_TEXT=red|COLOR_TEXT must look like #RRGGBB"; do
+  "launcher=nopipe|launcher must look like" "just words|expected KEY=value" "COLOR_TEXT=red|COLOR_TEXT must look like #RRGGBB" \
+  "slash_command=reload|slash_command must start with /" "MENU_KEY=q|MENU_KEY is already a claude-grid or tmux key"; do
   write_config "${bad%%|*}"
   expect "rejects ${bad%%|*}" "config:2: ${bad#*|}" cg colors
 done
@@ -320,8 +321,8 @@ expect "themes lists bundled and user themes" 'tokyo-night' cg themes
 write_config
 
 section "Settings menu"
-# Menu numbers follow SETTING_KEYS; LAUNCHERS comes after the last setting.
-on_tty '8\ngruvbox\n6\n40\n4\n500\n70\n1\nC-Spce\nC-a\n18\na\n*/proj\nmise run claude\n\ns\n' "$BASH_BIN" "$REPO/bin/claude-grid" config >"$WORK/menu.out" 2>&1
+# Menu numbers follow SETTING_KEYS; LAUNCHERS and SLASH_COMMANDS come after the last setting.
+on_tty '8\ngruvbox\n6\n40\n4\n500\n70\n1\nC-Spce\nC-a\n19\na\n*/proj\nmise run claude\n\n20\na\nreload\na\n/compact now\n\ns\n' "$BASH_BIN" "$REPO/bin/claude-grid" config >"$WORK/menu.out" 2>&1
 menu="$(strip <"$WORK/menu.out")"
 expect "rejects an out-of-range value" 'FLOAT_WIDTH must be 1-100' printf '%s' "$menu"
 expect "rejects a key tmux doesn't know" "doesn't know the key C-Spce" printf '%s' "$menu"
@@ -329,6 +330,8 @@ expect "saves only changed values" '^FLOAT_WIDTH=70$' cat "$CONFIG"
 expect "saves the theme" '^THEME=gruvbox$' cat "$CONFIG"
 expect "saves the prefix" '^PREFIX=C-a$' cat "$CONFIG"
 expect "saves the launcher" '^launcher=\*/proj\|mise run claude$' cat "$CONFIG"
+expect "rejects a picker command without a /" 'the command must start with /' printf '%s' "$menu"
+expect "saves the picker commands, defaults first" '^slash_command=/reload-plugins slash_command=/reload-skills slash_command=/compact now $' sh -c "grep '^slash_command=' '$CONFIG' | tr '\n' ' '"
 expect "running grids pick up the new settings" 'bg=#282828' tg main show -gv status-style
 check "the saved file loads again" cg colors
 on_tty '10\n#112233\n8\nnord\ns\n' "$BASH_BIN" "$REPO/bin/claude-grid" config >"$WORK/menu.out" 2>&1
@@ -364,6 +367,111 @@ expect "remove-launcher removes the rule" 'removed launcher \*/my_project' cg co
 check "and it's gone from the file" sh -c "! grep -q '^launcher=' '$CONFIG'"
 expect "remove-launcher of a missing rule fails" 'no launcher for \*/nope' cg config remove-launcher '*/nope'
 expect "unknown config commands are refused" 'unknown config command: bogus' cg config bogus
+write_config
+expect "add-command adds to the picker" 'added /compact keep the plan to the picker' cg config add-command '/compact keep the plan'
+expect "the first change writes the defaults too, in order" '^slash_command=/reload-plugins slash_command=/reload-skills slash_command=/compact keep the plan $' sh -c "grep '^slash_command=' '$CONFIG' | tr '\n' ' '"
+expect "running grids get the new list" '^/compact keep the plan$' tail -n 1 "$STATE/slash-commands"
+expect "adding one that's listed is a no-op" 'already in the picker' cg config add-command /reload-skills
+expect "add-command refuses a command without a /" 'must start with /' cg config add-command reload
+expect "add-command refuses a line break" "can't contain line breaks" cg config add-command "/x
+slash_command=/y"
+expect "show lists the picker commands" 'slash_command +/compact keep the plan' cg config show
+expect "remove-command removes one" 'removed /reload-skills from the picker' cg config remove-command /reload-skills
+cg config remove-command /reload-plugins >/dev/null 2>&1
+expect "the last command can't be removed" 'needs at least one command' cg config remove-command '/compact keep the plan'
+expect "remove-command of a missing one fails" "/nope isn't in the picker" cg config remove-command /nope
+write_config
+expect "the picker key is bound after the prefix" 'send\.sh open' tg main list-keys -T prefix /
+expect "the status bar shows it" '/: send' tg main display -p '#{E:status-right}'
+expect "MENU_KEY refuses a grid key" 'MENU_KEY is already a claude-grid or tmux key' cg config set MENU_KEY=f
+expect "MENU_KEY refuses a key tmux doesn't know" "doesn't know the key C-Nope" cg config set MENU_KEY=C-Nope
+cg config set MENU_KEY=m >/dev/null 2>&1
+expect "a new MENU_KEY moves the binding" 'send\.sh open' tg main list-keys -T prefix m
+expect "and the old key gets tmux's own binding back" 'list-keys -1N' tg main list-keys -T prefix /
+cg config set MENU_KEY=off >/dev/null 2>&1
+check "MENU_KEY=off removes the binding" sh -c "! tmux -L claude-grid-main list-keys -T prefix m 2>/dev/null | grep -q send.sh"
+check "and the status bar hint" sh -c "! tmux -L claude-grid-main display -p '#{E:status-right}' | grep -q ': send'"
+write_config
+cg config unset MENU_KEY >/dev/null 2>&1
+
+section "Sending slash commands"
+# A stand-in for Claude's prompt: ❯ and the typed text, or a dimmed suggestion in a new session.
+cat >"$WORK/bin/prompt-claude" <<'EOF'
+#!/bin/sh
+case "$PWD" in */hint) printf '❯ \033[2mTry "x"\033[0m' ;; *) printf '❯ ' ;; esac
+while IFS= read -r line; do echo "got: $line"; printf '❯ '; done
+EOF
+chmod +x "$WORK/bin/prompt-claude"
+for name in ready hint busy asking draft gone new; do mkdir -p "$WORK/send/$name"; done
+write_config "CLAUDE_COMMAND=$WORK/bin/prompt-claude"
+(cd "$WORK/send" && cg --grid send ready hint busy asking draft gone new >/dev/null 2>&1)
+pane_named() { tg send list-panes -s -t claude -F '#{pane_id} #{@claude_name}' | awk -v n="$1" '$2 == n { print $1 }'; }
+for name in ready hint busy asking draft gone new; do wait_for sh -c "tmux -L claude-grid-send capture-pane -p -t '$(pane_named "$name")' | grep -q '❯'"; done
+set_states() {
+  local name state
+  for pair in ready:idle hint:done busy:working asking:waiting draft:idle gone:exited; do
+    name="${pair%%:*}" state="${pair#*:}"
+    tg send set -p -t "$(pane_named "$name")" @claude_hook_state "$state"
+  done
+}
+set_states
+tg send send-keys -t "$(pane_named draft)" -l 'half typed'
+expect "sends to the ready panes and lists the others with the reason" \
+  'sent /reload-plugins to 2 panes; skipped .*busy \(working\).*asking \(waiting on a dialog\).*draft \(has unsent text in its prompt\).*gone \(Claude has exited\).*new \(no state reported yet\)' \
+  cg send --grid send /reload-plugins
+check "an idle pane got the command" wait_for sh -c "tmux -L claude-grid-send capture-pane -p -S - -t '$(pane_named ready)' | grep -q '^got: /reload-plugins$'"
+check "so did a new session showing a dimmed suggestion" wait_for sh -c "tmux -L claude-grid-send capture-pane -p -S - -t '$(pane_named hint)' | grep -q 'got: /reload-plugins$'"
+check "a working pane got nothing" sh -c "! tmux -L claude-grid-send capture-pane -p -S - -t '$(pane_named busy)' | grep -q reload"
+check "a pane with a draft keeps it, unsent" sh -c "tmux -L claude-grid-send capture-pane -p -t '$(pane_named draft)' | grep -q '❯ half typed$'"
+check "focusing a waiting pane doesn't make it ready" sh -c "tmux -L claude-grid-send select-pane -t '$(pane_named asking)'; [ \"\$(tmux -L claude-grid-send show -pv -t '$(pane_named asking)' @claude_hook_state)\" = waiting ]"
+expect "from inside a grid it sends to that grid" 'sent /from-inside to 2 panes' \
+  env TMUX="$SOCKET_DIR/claude-grid-send,1,0" "$BASH_BIN" "$REPO/bin/claude-grid" send /from-inside
+for name in ready hint; do tg send set -p -t "$(pane_named "$name")" @claude_hook_state working; done
+check "sending to no pane fails" sh -c "! '$BASH_BIN' '$REPO/bin/claude-grid' send --grid send /reload-plugins >/dev/null 2>&1"
+expect "refuses a command without a /" 'must start with /' cg send --grid send reload-plugins
+expect "refuses a line break" "can't contain line breaks" cg send --grid send "/x
+y"
+expect "needs a grid when several run" 'several grids are running' cg send /reload-plugins
+expect "the hooks mark a session that ended" '"SessionEnd".*state\.sh. exited' cat "$STATE/claude-hooks.json"
+# Ctrl-D ends the stand-in without any hook, like a crash: the pane's own command marks it.
+tg send send-keys -t "$(pane_named new)" C-d
+check "a pane whose Claude ended without a hook is marked exited" wait_for sh -c "[ \"\$(tmux -L claude-grid-send show -pv -t '$(pane_named new)' @claude_hook_state)\" = exited ]"
+expect "and its border says so" 'exited' tg send show -pv -t "$(pane_named new)" @claude_state
+
+section "Slash command picker"
+set_states
+picker() { on_tty "$1" env TMUX="$SOCKET_DIR/claude-grid-send,1,0" "$BASH_BIN" "$REPO/libexec/claude-grid/send.sh" menu "$(pane_named ready)"; }
+styles() { tg send list-panes -s -t claude -F '#{pane_id} #{pane_floating_flag} [#{window-style}] [#{window-active-style}]'; }
+# The earlier focus test floated a pane (auto-float), so the grid already has a float's fade.
+expect "a pane floats before the picker opens" ' 1 ' styles
+before="$(styles)"
+{ sleep 1; printf '\033'; sleep 1; } | pty env TMUX="$SOCKET_DIR/claude-grid-send,1,0" "$BASH_BIN" "$REPO/libexec/claude-grid/send.sh" menu "$(pane_named ready)" >/dev/null 2>&1 &
+sleep 0.5
+expect "while it's open every pane is faded, the active and floating ones too" '^7$' sh -c "tmux -L claude-grid-send list-panes -s -t claude -F '#{window-active-style}' | grep -c 'dim='"
+wait
+check "Esc puts the float's fade back as it was" test "$(styles)" = "$before"
+picker '\033' >"$WORK/picker.out" 2>&1
+expect "lists the ready panes and why others are skipped" 'ready: 2 panes' strip <"$WORK/picker.out"
+expect "and the configured commands, numbered" '/reload-skills +\(2\)' strip <"$WORK/picker.out"
+check "Esc sends nothing" sh -c "! tmux -L claude-grid-send capture-pane -p -S - -t '$(pane_named ready)' | grep -q 'got: /reload-skills'"
+picker '2' >"$WORK/picker.out" 2>&1
+expect "a number key sends that command" 'sent /reload-skills to 2 panes' strip <"$WORK/picker.out"
+check "and the ready panes got it" wait_for sh -c "tmux -L claude-grid-send capture-pane -p -S - -t '$(pane_named ready)' | grep -q '^got: /reload-skills$'"
+check "sending also puts the fade back as it was" test "$(styles)" = "$before"
+picker 'cnope\n/compact now\n' >"$WORK/picker.out" 2>&1
+expect "custom asks again for a command without a /" 'must start with /' strip <"$WORK/picker.out"
+check "and sends a valid one" wait_for sh -c "tmux -L claude-grid-send capture-pane -p -S - -t '$(pane_named ready)' | grep -q '^got: /compact now$'"
+check "only the commands themselves reach the pane, nothing from the screen" sh -c "! tmux -L claude-grid-send capture-pane -p -S - -t '$(pane_named ready)' | grep '^got:' | grep -vqE '^got: /(reload-plugins|reload-skills|from-inside|compact now)$'"
+# The key binding opens the picker in a popup, which needs an attached client.
+(sleep 20 | TERM=xterm-256color pty tmux -L claude-grid-send attach -t claude >/dev/null 2>&1 &)
+wait_for sh -c "[ -n \"\$(tmux -L claude-grid-send list-clients -F '#{client_name}')\" ]"
+client="$(tg send list-clients -F '#{client_name}' | head -n 1)"
+tg send send-keys -K -c "$client" C-Space /
+check "prefix + / opens the picker over the faded grid" wait_for sh -c "[ \"\$(tmux -L claude-grid-send list-panes -s -t claude -F '#{window-active-style}' | grep -c 'dim=')\" = 7 ]"
+tg send send-keys -K -c "$client" Escape
+# shellcheck disable=SC2016 # $1 and the $(...) are for the inner sh
+check "Esc in the popup closes it and puts the fade back" wait_for sh -c '[ "$(tmux -L claude-grid-send list-panes -s -t claude -F "#{pane_id} #{pane_floating_flag} [#{window-style}] [#{window-active-style}]")" = "$1" ]' _ "$before"
+tg send kill-server
 write_config
 
 section "Hostile names and values"

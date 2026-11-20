@@ -53,6 +53,15 @@
 # skip it. For one run: claude-grid --precheck CMD, or --no-precheck
 #PRECHECK=
 
+# The key after PREFIX that opens the slash command picker, as a tmux key name. off: no key,
+# so / stays tmux's own key. Without the picker: claude-grid send /reload-plugins
+#MENU_KEY=/
+
+# The commands the picker offers, one line each, in order. Any slash_command= line replaces the
+# whole default list, so list the defaults too if you want to keep them.
+#slash_command=/reload-plugins
+#slash_command=/reload-skills
+
 # Folders whose Claude starts through a project launcher instead of CLAUDE_COMMAND.
 # One line per rule: launcher=folder-glob|command. The first matching rule wins.
 # claude-grid passes its hook flags in $CLAUDE_EXTRA_ARGS; the launcher must hand them to

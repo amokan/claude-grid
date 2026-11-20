@@ -37,7 +37,7 @@ readonly STATE_DIR="${XDG_STATE_HOME:-$HOME/.local/state}/claude-grid"
 # ---- Settings ---------------------------------------------------------------
 
 readonly COLOR_KEYS="COLOR_WAITING COLOR_ACTIVE COLOR_BORDER COLOR_TEXT COLOR_STATUS"
-readonly SETTING_KEYS="PREFIX START_FLOATING AUTO_FLOAT FLOAT_WIDTH FLOAT_HEIGHT FADE SWITCH_GRACE_MS THEME $COLOR_KEYS CLAUDE_COMMAND MINIMAL_STATUS MINIMAL_STATUS_COMMAND PRECHECK"
+readonly SETTING_KEYS="PREFIX START_FLOATING AUTO_FLOAT FLOAT_WIDTH FLOAT_HEIGHT FADE SWITCH_GRACE_MS THEME $COLOR_KEYS CLAUDE_COMMAND MINIMAL_STATUS MINIMAL_STATUS_COMMAND PRECHECK MENU_KEY"
 
 builtin_default() {
   case "$1" in
@@ -58,6 +58,7 @@ builtin_default() {
     MINIMAL_STATUS) echo "false" ;;
     MINIMAL_STATUS_COMMAND) echo "" ;;
     PRECHECK) echo "" ;;
+    MENU_KEY) echo "/" ;;
   esac
 }
 
@@ -88,6 +89,7 @@ describe() {
     MINIMAL_STATUS) echo "true: new panes get a one-line Claude statusLine (for one run: --minimal-status, --no-minimal-status)" ;;
     MINIMAL_STATUS_COMMAND) echo "the statusLine command for minimal-status panes (empty: claude-grid's one-liner)" ;;
     PRECHECK) echo "a command run before a new grid starts; the grid opens only if it succeeds (for one run: --precheck CMD, --no-precheck)" ;;
+    MENU_KEY) echo "key after PREFIX that opens the slash command picker, as a tmux key name (off: no key)" ;;
   esac
 }
 
@@ -125,7 +127,20 @@ validate_setting() {
       [[ "$value" =~ $re ]] || { echo "must look like #RRGGBB"; return 1; } ;;
     CLAUDE_COMMAND)
       [ -n "$value" ] || { echo "must not be empty"; return 1; } ;;
+    MENU_KEY)
+      [ -n "$value" ] && [[ "$value" != *[[:space:]]* ]] || { echo "must be a tmux key name such as / or off"; return 1; }
+      ! is_one_of "$value" "$GRID_KEYS" || { echo "is already a claude-grid or tmux key ($GRID_KEYS)"; return 1; } ;;
   esac
+}
+
+# Keys after the prefix that MENU_KEY can't take: claude-grid's own, and tmux's : ? d.
+readonly GRID_KEYS="a c C d f F g p q r z 1 2 3 4 5 6 7 8 9 : ? Escape Enter Up Down Left Right"
+
+# Prints why a picker command is invalid and fails, or succeeds silently. Each one is typed into
+# every ready pane and followed by Enter, so a line break would send part of it early.
+validate_slash_command() {
+  [[ "$1" != *[[:cntrl:]]* ]] || { echo "can't contain line breaks or other control characters"; return 1; }
+  [[ "$1" == /[![:space:]/]* ]] || { echo "must start with / and a command name, e.g. /reload-plugins"; return 1; }
 }
 
 # Prints why a launcher rule is invalid and fails, or succeeds silently.
@@ -141,6 +156,10 @@ done
 # Folders whose Claude must start through a project launcher instead of CLAUDE_COMMAND.
 # Each entry is "folder-glob|command"; claude-grid passes its hook flags in $CLAUDE_EXTRA_ARGS.
 LAUNCHERS=()
+# The commands the MENU_KEY picker offers. slash_command= lines in the config replace the whole
+# list, so the defaults can be removed or reordered too.
+readonly DEFAULT_SLASH_COMMANDS=("/reload-plugins" "/reload-skills")
+SLASH_COMMANDS=("${DEFAULT_SLASH_COMMANDS[@]}")
 
 trim() {
   local s="$1"
@@ -229,11 +248,15 @@ switch_theme() {
 
 CONFIG_KEYS=()
 CONFIG_VALUES=()
+CONFIG_SLASH_COMMANDS=()
 on_config_line() {
   local n="$1" key="$2" value="$3" msg
   if [ "$key" = launcher ]; then
     msg="$(validate_launcher "$value")" || die "$CONFIG_FILE:$n: launcher $msg"
     LAUNCHERS+=("$value")
+  elif [ "$key" = slash_command ]; then
+    msg="$(validate_slash_command "$value")" || die "$CONFIG_FILE:$n: slash_command $msg (got $value)"
+    CONFIG_SLASH_COMMANDS+=("$value")
   elif is_one_of "$key" "$SETTING_KEYS"; then
     msg="$(validate_setting "$key" "$value")" || die "$CONFIG_FILE:$n: $key $msg (got $value)"
     CONFIG_KEYS+=("$key")
@@ -247,8 +270,14 @@ load_config() {
   local i key base
   CONFIG_KEYS=()
   CONFIG_VALUES=()
+  CONFIG_SLASH_COMMANDS=()
   LAUNCHERS=()
   [ ! -f "$CONFIG_FILE" ] || read_kv "$CONFIG_FILE" on_config_line
+  if [ ${#CONFIG_SLASH_COMMANDS[@]} -gt 0 ]; then
+    SLASH_COMMANDS=("${CONFIG_SLASH_COMMANDS[@]}")
+  else
+    SLASH_COMMANDS=("${DEFAULT_SLASH_COMMANDS[@]}")
+  fi
   # The theme goes first so COLOR_* lines can override single colors.
   for ((i = 0; i < ${#CONFIG_KEYS[@]}; i++)); do
     [ "${CONFIG_KEYS[$i]}" != THEME ] || THEME="${CONFIG_VALUES[$i]}"
@@ -263,6 +292,10 @@ load_config() {
   for ((i = 0; i < ${#CONFIG_KEYS[@]}; i++)); do
     printf -v "${CONFIG_KEYS[$i]}" '%s' "${CONFIG_VALUES[$i]}"
   done
+}
+
+slash_commands_changed() {
+  [ "$(printf '%s\n' ${SLASH_COMMANDS[@]+"${SLASH_COMMANDS[@]}"})" != "$(printf '%s\n' "${DEFAULT_SLASH_COMMANDS[@]}")" ]
 }
 
 # Keeps a value intact through the loader's quote stripping.
@@ -286,6 +319,10 @@ write_config() {
     if [ ${#LAUNCHERS[@]} -gt 0 ]; then
       printf '\n# Folders whose Claude starts through a project launcher: folder-glob|command\n'
       for launcher in "${LAUNCHERS[@]}"; do echo "launcher=$launcher"; done
+    fi
+    if slash_commands_changed; then
+      printf '\n# The commands the MENU_KEY picker offers, in order. These lines replace the defaults.\n'
+      for value in ${SLASH_COMMANDS[@]+"${SLASH_COMMANDS[@]}"}; do echo "slash_command=$value"; done
     fi
   } >"$tmp"
   mv "$tmp" "$CONFIG_FILE"
@@ -314,6 +351,18 @@ hook() {
     printf '    "%s": [{ "matcher": "%s", "hooks": [{ "type": "command", "command": "%s" }] }]' "$event" "$matcher" "$command"
   else
     printf '    "%s": [{ "hooks": [{ "type": "command", "command": "%s" }] }]' "$event" "$command"
+  fi
+}
+
+# The MENU_KEY binding for grid.conf. run-shell expands formats, so paths go in as #{q:...}.
+# -b runs it in the background: send.sh waits for the popup to close, and a plain run-shell
+# would hold the client's commands until then.
+menu_key_lines() {
+  if [ "$MENU_KEY" = off ]; then
+    echo "set -g @cg_menu_key ''"
+  else
+    echo "set -g @cg_menu_key $(tmux_quote "$MENU_KEY")"
+    echo "bind $(tmux_quote "$MENU_KEY") run-shell -b \"#{q:@cg_libexec}/send.sh open #{pane_id} #{q:client_name}\""
   fi
 }
 
@@ -346,9 +395,14 @@ set -g @cg_color_status "$COLOR_STATUS"
 set -g pane-border-style "#{?#{==:#{@claude_state},waiting},bg=$COLOR_WAITING,bg=$COLOR_BORDER}"
 set -g pane-active-border-style "#{?#{==:#{@claude_state},waiting},bg=$COLOR_WAITING,bg=$COLOR_ACTIVE}"
 set -g status-style "bg=$COLOR_STATUS fg=$COLOR_TEXT"
+$(menu_key_lines)
 source-file -q $(tmux_quote "$CONFIG_DIR/tmux.local.conf")
 EOF
   mv "$tmp" "$STATE_DIR/grid.conf"
+
+  tmp="$(mktemp "$STATE_DIR/slash-commands.XXXXXX")"
+  printf '%s\n' ${SLASH_COMMANDS[@]+"${SLASH_COMMANDS[@]}"} >"$tmp"
+  mv "$tmp" "$STATE_DIR/slash-commands"
 
   write_claude_settings claude-hooks.json
   write_claude_settings claude-minimal-status.json "${MINIMAL_STATUS_COMMAND:-$(sh_quote "$LIBEXEC/statusline.sh") $(sh_quote "$COLOR_ACTIVE")}"
@@ -369,7 +423,8 @@ write_claude_settings() {
     hook PostToolUse working '*'; echo ','
     hook PermissionRequest waiting '*'; echo ','
     hook Notification waiting 'permission_prompt|elicitation_dialog'; echo ','
-    hook Stop 'done'; echo
+    hook Stop 'done'; echo ','
+    hook SessionEnd exited; echo
     if [ -n "$statusline" ]; then
       echo '  },'
       printf '  "statusLine": { "type": "command", "command": "%s" }\n' "$(json_escape "$statusline")"
@@ -502,8 +557,10 @@ claude_cmd() {
   if launcher="$(launcher_for "$dir")"; then
     launch="CLAUDE_GRID=$GRID CLAUDE_EXTRA_ARGS=$(printf '%q' "$extra") $launcher"
   fi
-  # shellcheck disable=SC2016 # $? and $s are for the pane's shell, not this one
-  printf '%s || { s=$?; printf "\\n\\033[1mclaude-grid: claude launch exited with status %%s. Press Enter for a shell.\\033[0m " "$s"; read -r _; }; exec %q -l' \
+  # However Claude ends (quits, crashes, is killed), the pane is marked exited before it turns
+  # into a shell, so the slash command picker never types into that shell.
+  # shellcheck disable=SC2016 # $?, $s and $TMUX_PANE are for the pane's shell, not this one
+  printf '%s || { s=$?; printf "\\n\\033[1mclaude-grid: claude launch exited with status %%s. Press Enter for a shell.\\033[0m " "$s"; read -r _; }; tmux set -p -t "$TMUX_PANE" @claude_state exited 2>/dev/null; tmux set -p -t "$TMUX_PANE" @claude_hook_state exited 2>/dev/null; exec %q -l' \
     "$launch" "${SHELL:-/bin/sh}"
 }
 
@@ -540,9 +597,24 @@ refresh_running_grids() {
   local name
   for name in $(grid_names); do
     GRID="$name"
-    t source-file "$STATE_DIR/grid.conf"
+    reload_grid
     float_sh restyle
   done
+}
+
+# Loads the regenerated config into $GRID. Sourcing it adds the new MENU_KEY binding but can't
+# remove the old one, so a key MENU_KEY no longer uses gets tmux's own binding back, if it has one.
+reload_grid() {
+  local old probe default
+  old="$(t show -gqv @cg_menu_key 2>/dev/null || true)"
+  if [ -n "$old" ] && { [ "$MENU_KEY" = off ] || [ "$old" != "$MENU_KEY" ]; }; then
+    probe="$SOCKET_PREFIX.keyprobe.$$"
+    default="$(tmux -L "$probe" -f /dev/null start-server \; list-keys -T prefix "$old" 2>/dev/null || true)"
+    rm -f "${TMUX_TMPDIR:-/tmp}/tmux-$(id -u)/$probe"
+    t unbind -q -T prefix "$old" 2>/dev/null || true
+    [ -z "$default" ] || printf '%s\n' "$default" | t source-file - 2>/dev/null || true
+  fi
+  t source-file "$STATE_DIR/grid.conf"
 }
 
 attach_grid() {
@@ -582,12 +654,16 @@ ${b}Manage${r}
   claude-grid ls              list grids, their panes and each pane's state
   claude-grid kill [NAME]     end a grid: the one you're in, or the only one running
   claude-grid kill --all      end every grid
+  claude-grid send /COMMAND   type a slash command into every ready Claude, e.g. send /reload-plugins
+    --grid NAME               in that grid, instead of the one you're in or the only one running
   claude-grid config          change settings in a menu (--edit opens the file in \$EDITOR)
     config set KEY=VALUE...   change settings without the menu, e.g. config set FADE=40 THEME=nord
     config unset KEY...       put settings back to their defaults
     config add-launcher GLOB COMMAND     e.g. config add-launcher '~/code/my_project' 'mise run claude'
     config remove-launcher GLOB          remove the launcher rules for that folder glob
-    config show               print the current settings and launchers
+    config add-command /COMMAND          add a command to the slash command picker
+    config remove-command /COMMAND       remove one from it
+    config show               print the current settings, launchers and picker commands
   claude-grid themes          preview the color themes
   claude-grid doctor          check tmux, claude and the install
   claude-grid colors          show the current colors as swatches
@@ -598,7 +674,7 @@ ${b}Keys inside a grid${r}, after $PREFIX:
   a  next waiting       1-9  pane          arrows  step        z  zoom
   f  float              F    auto-float    Esc     unfloat     Enter  float (right after switching)
   p  promote            g    grid          c       new claude here    C  new claude in a directory
-  q  close this grid    d    detach        r       reload
+  q  close this grid    d    detach        r       reload$([ "$MENU_KEY" = off ] || printf '      %s  slash command picker' "$MENU_KEY")
 
 $(ui_dim "Settings: $CONFIG_FILE")
 EOF
@@ -686,6 +762,33 @@ cmd_kill() {
   echo "claude-grid: stopped grid $target"
 }
 
+# claude-grid send [--grid NAME] COMMAND: types COMMAND into every ready Claude in a grid.
+cmd_send() {
+  local names target="" command="" msg socket
+  while [ $# -gt 0 ]; do
+    case "$1" in
+      --grid | -g) [ -n "${2:-}" ] || die "$1 needs a grid name"; target="$2"; shift 2 ;;
+      --grid=*) target="${1#--grid=}"; shift ;;
+      -*) die "unknown option: $1 (usage: claude-grid send [--grid NAME] /COMMAND)" ;;
+      *) [ -z "$command" ] || die "quote the command, e.g. claude-grid send '/compact keep the plan'"; command="$1"; shift ;;
+    esac
+  done
+  [ -n "$command" ] || die "usage: claude-grid send [--grid NAME] /COMMAND, e.g. claude-grid send /reload-plugins"
+  msg="$(validate_slash_command "$command")" || die "the command $msg"
+  [ -n "$target" ] || target="$(current_grid)"
+  if [ -z "$target" ]; then
+    names="$(grid_names)"
+    [ -n "$names" ] || die "no grid running"
+    [ "$(echo "$names" | wc -l)" -eq 1 ] || die "several grids are running ($(join_words <<<"$names")); pick one with --grid"
+    target="$names"
+  fi
+  valid_grid_name "$target" || die "not a grid name: $target"
+  grid_running "$target" || die "no grid named $target is running"
+  # send.sh runs plain tmux commands, which find the grid's server through $TMUX.
+  socket="$(tg "$target" display -p -t "$SESSION" '#{socket_path}')"
+  TMUX="$socket,0,0" "$LIBEXEC/send.sh" send "$(tg "$target" display -p -t "$SESSION" '#{pane_id}')" "$command"
+}
+
 cmd_attach() {
   local names name
   GRID="${1:-}"
@@ -727,6 +830,10 @@ print_menu() {
   mark=" "
   [ ${#LAUNCHERS[@]} -eq 0 ] || mark="$(ui_fg "$COLOR_WAITING")*$UI_RESET"
   printf '  %2d %s %-16s %s\n' "$i" "$mark" "LAUNCHERS" "${#LAUNCHERS[@]} folder rule(s)"
+  i=$((i + 1))
+  mark=" "
+  ! slash_commands_changed || mark="$(ui_fg "$COLOR_WAITING")*$UI_RESET"
+  printf '  %2d %s %-16s %s\n' "$i" "$mark" "SLASH_COMMANDS" "$(join_words < <(printf '%s\n' ${SLASH_COMMANDS[@]+"${SLASH_COMMANDS[@]}"}))"
   echo
   echo "  $(ui_dim "* changed from the default")"
   if [ -n "$MENU_MESSAGE" ]; then
@@ -799,6 +906,8 @@ edit_setting() {
       ui_fail "$key $msg"
     elif [ "$key" = PREFIX ] && ! tmux_knows_key "$value"; then
       ui_fail "tmux doesn't know the key $value (examples: C-Space, C-a, M-Space)"
+    elif [ "$key" = MENU_KEY ] && [ "$value" != off ] && ! tmux_knows_key "$value"; then
+      ui_fail "tmux doesn't know the key $value (examples: /, m, M-s)"
     else
       printf -v "$key" '%s' "$value"
       CHANGED=true
@@ -853,6 +962,56 @@ edit_launchers() {
   done
 }
 
+edit_slash_commands() {
+  local choice command i msg
+  while true; do
+    ui_header "Slash command picker"
+    echo "  The commands $PREFIX $MENU_KEY offers to send to every ready Claude, in this order."
+    echo
+    i=0
+    for command in ${SLASH_COMMANDS[@]+"${SLASH_COMMANDS[@]}"}; do i=$((i + 1)); printf '  %2d  %s\n' "$i" "$command"; done
+    echo
+    read -r -p "  a to add, a number to remove, Enter when done: " choice || return 0
+    case "$choice" in
+      '') return 0 ;;
+      a | A)
+        read -r -p "  Command (e.g. /compact keep the test plan): " command || return 0
+        command="$(trim "$command")"
+        if ! msg="$(validate_slash_command "$command")"; then
+          ui_fail "the command $msg"
+        elif is_listed "$command"; then
+          ui_note "$command is already in the list"
+        else
+          SLASH_COMMANDS+=("$command")
+          CHANGED=true
+        fi ;;
+      *)
+        if [[ "$choice" =~ ^[0-9]+$ ]] && [ "$choice" -ge 1 ] && [ "$choice" -le ${#SLASH_COMMANDS[@]} ]; then
+          if [ ${#SLASH_COMMANDS[@]} -eq 1 ]; then
+            ui_fail "the picker needs at least one command; set MENU_KEY=off to turn it off"
+          else
+            remove_slash_command "${SLASH_COMMANDS[$((choice - 1))]}"
+            CHANGED=true
+          fi
+        else
+          ui_fail "no command $choice"
+        fi ;;
+    esac
+  done
+}
+
+is_listed() {
+  local command
+  for command in ${SLASH_COMMANDS[@]+"${SLASH_COMMANDS[@]}"}; do [ "$command" != "$1" ] || return 0; done
+  return 1
+}
+
+remove_slash_command() {
+  local command kept=()
+  for command in ${SLASH_COMMANDS[@]+"${SLASH_COMMANDS[@]}"}; do [ "$command" = "$1" ] || kept+=("$command"); done
+  SLASH_COMMANDS=(${kept[@]+"${kept[@]}"})
+}
+
 config_menu() {
   local choice count answer keys
   [ -t 0 ] || die "the settings menu needs a terminal; edit $CONFIG_FILE directly or run claude-grid config --edit"
@@ -885,8 +1044,10 @@ config_menu() {
           edit_setting "${keys[$((choice - 1))]}"
         elif [ "$choice" = $((count + 1)) ]; then
           edit_launchers
+        elif [ "$choice" = $((count + 2)) ]; then
+          edit_slash_commands
         else
-          MENU_MESSAGE="$(ui_fail "pick 1-$((count + 1)), s or q")"
+          MENU_MESSAGE="$(ui_fail "pick 1-$((count + 2)), s or q")"
         fi ;;
     esac
   done
@@ -915,6 +1076,9 @@ config_set() {
     msg="$(validate_setting "$key" "$value")" || die "$key $msg (got $value)"
     if [ "$key" = PREFIX ] && ! tmux_knows_key "$value"; then
       die "tmux doesn't know the key $value (examples: C-Space, C-a, M-Space)"
+    fi
+    if [ "$key" = MENU_KEY ] && [ "$value" != off ] && ! tmux_knows_key "$value"; then
+      die "tmux doesn't know the key $value (examples: /, m, M-s)"
     fi
   done
   for pair in "$@"; do
@@ -984,6 +1148,32 @@ config_remove_launcher() {
   save_settings
 }
 
+config_add_command() {
+  local command msg
+  [ $# -eq 1 ] || die "usage: claude-grid config add-command /COMMAND (quote it if it has spaces)"
+  command="$(trim "$1")"
+  msg="$(validate_slash_command "$command")" || die "the command $msg"
+  if is_listed "$command"; then
+    ui_note "$command is already in the picker"
+    return 0
+  fi
+  # The first change writes the whole list, defaults included, so adding one keeps the others.
+  SLASH_COMMANDS+=("$command")
+  ui_ok "added $command to the picker"
+  save_settings
+}
+
+config_remove_command() {
+  local command
+  [ $# -eq 1 ] || die "usage: claude-grid config remove-command /COMMAND"
+  command="$(trim "$1")"
+  is_listed "$command" || die "$command isn't in the picker (see claude-grid config show)"
+  [ ${#SLASH_COMMANDS[@]} -gt 1 ] || die "the picker needs at least one command; turn it off with claude-grid config set MENU_KEY=off"
+  remove_slash_command "$command"
+  ui_ok "removed $command from the picker"
+  save_settings
+}
+
 config_show() {
   local key value rule
   for key in $SETTING_KEYS; do
@@ -996,6 +1186,13 @@ config_show() {
   done
   for rule in ${LAUNCHERS[@]+"${LAUNCHERS[@]}"}; do
     printf '%s %-24s %s → %s\n' "$(ui_fg "$COLOR_WAITING")*$UI_RESET" "launcher" "${rule%%|*}" "${rule#*|}"
+  done
+  for rule in ${SLASH_COMMANDS[@]+"${SLASH_COMMANDS[@]}"}; do
+    if slash_commands_changed; then
+      printf '%s %-24s %s\n' "$(ui_fg "$COLOR_WAITING")*$UI_RESET" "slash_command" "$rule"
+    else
+      printf '  %-24s %s\n' "slash_command" "$rule"
+    fi
   done
   echo
   echo "  $(ui_dim "* changed from the default · $CONFIG_FILE")"
@@ -1016,6 +1213,8 @@ cmd_config() {
     unset) load_config; config_unset "$@" ;;
     add-launcher) load_config; config_add_launcher "$@" ;;
     remove-launcher) load_config; config_remove_launcher "$@" ;;
+    add-command) load_config; config_add_command "$@" ;;
+    remove-command) load_config; config_remove_command "$@" ;;
     show) load_config; config_show ;;
     *) die "unknown config command: $command (see claude-grid -h)" ;;
   esac
@@ -1051,7 +1250,7 @@ cmd_doctor() {
 
   ui_header "Install"
   ui_ok "claude-grid $VERSION $(ui_dim "($SELF)")"
-  if [ -f "$LIBEXEC/tmux.conf" ] && [ -x "$LIBEXEC/state.sh" ] && [ -x "$LIBEXEC/float.sh" ] && [ -x "$LIBEXEC/next-waiting.sh" ] && [ -x "$LIBEXEC/statusline.sh" ]; then
+  if [ -f "$LIBEXEC/tmux.conf" ] && [ -x "$LIBEXEC/state.sh" ] && [ -x "$LIBEXEC/float.sh" ] && [ -x "$LIBEXEC/next-waiting.sh" ] && [ -x "$LIBEXEC/statusline.sh" ] && [ -x "$LIBEXEC/send.sh" ]; then
     ui_ok "support files $(ui_dim "($LIBEXEC)")"
   else
     ui_fail "support files missing or not executable in $LIBEXEC; reinstall with install.sh"; failed=1
@@ -1089,6 +1288,7 @@ case "${1:-}" in
   doctor) cmd_doctor; exit ;;
   ls) cmd_ls; exit 0 ;;
   kill) shift; cmd_kill "$@"; exit 0 ;;
+  send) shift; cmd_send "$@"; exit ;;
   attach) shift; load_config; check_tmux; write_generated; cmd_attach "$@"; exit 0 ;;
 esac
 
@@ -1214,7 +1414,7 @@ if $fresh && [ -n "$PRECHECK" ]; then
 fi
 
 write_generated
-$fresh || t source-file "$STATE_DIR/grid.conf"
+$fresh || reload_grid
 
 for dir in ${dirs[@]+"${dirs[@]}"}; do
   add_pane "$dir"

@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # Records a Claude session's state on its tmux pane so the border can show it.
-# Usage: state.sh <working|waiting|done|idle|tool>
+# Usage: state.sh <working|waiting|done|idle|exited|tool>
 # "tool" reads the PreToolUse payload and picks waiting for tools that ask the user.
 
 [ -n "${TMUX_PANE:-}" ] || { cat >/dev/null; exit 0; }
@@ -25,4 +25,7 @@ if [ "$state" = "tool" ]; then
 fi
 
 tmux set -p -t "$TMUX_PANE" @claude_state "$state" >/dev/null 2>&1
+# Focusing a pane clears waiting and done from @claude_state once the user has seen them. This
+# copy keeps what the hook reported, so send.sh can tell a dialog is still open.
+tmux set -p -t "$TMUX_PANE" @claude_hook_state "$state" >/dev/null 2>&1
 exit 0
