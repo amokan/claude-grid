@@ -615,15 +615,16 @@ term_size() {
 }
 
 # tmux expands formats like #{...} in a start folder, so a # in the path is doubled, and
-# tmux_word keeps a trailing ; in it.
+# tmux_word keeps a trailing ; in it. The pane's command is POSIX shell, so it runs under
+# /bin/sh: a single-string command would run under the user's login shell, which may be fish.
 add_pane() {
   local dir pane
   dir="$(cd "$1" && pwd)"
   if grid_running "$GRID"; then
-    pane="$(t split-window -d -t "$(tiled_pane)" -c "$(tmux_word "${dir//#/##}")" -P -F '#{pane_id}' "$(claude_cmd "$dir")")"
+    pane="$(t split-window -d -t "$(tiled_pane)" -c "$(tmux_word "${dir//#/##}")" -P -F '#{pane_id}' /bin/sh -c "$(claude_cmd "$dir")")"
     t select-layout -t "$SESSION" tiled
   else
-    pane="$(t new-session -d -s "$SESSION" -c "$(tmux_word "${dir//#/##}")" -x "$(term_size cols)" -y "$(term_size rows)" -P -F '#{pane_id}' "$(claude_cmd "$dir")")"
+    pane="$(t new-session -d -s "$SESSION" -c "$(tmux_word "${dir//#/##}")" -x "$(term_size cols)" -y "$(term_size rows)" -P -F '#{pane_id}' /bin/sh -c "$(claude_cmd "$dir")")"
     t set -g @cg_grid "$GRID"
     t set -g @cg_autofloat "$AUTO_FLOAT"
   fi

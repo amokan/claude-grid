@@ -124,6 +124,13 @@ expect "the prefix is applied" '^C-Space$' tg main show -gqv prefix
 expect "ls shows the grid and its panes" 'grid main \(detached\)' cg ls
 
 expect "claude knows which grid it runs in" '^main$' sh -c "cat '$WORK'/grid.* | sort -u"
+if [ -x /bin/csh ]; then
+  # csh, like fish, can't run the POSIX launch command; tmux must not hand it to the login shell.
+  rm -f "$WORK"/args.*
+  (cd "$WORK/proj" && env SHELL=/bin/csh "$BASH_BIN" "$REPO/bin/claude-grid" --grid csh a >/dev/null 2>&1)
+  check "panes start when the login shell isn't a POSIX shell" wait_for sh -c "ls '$WORK'/args.* >/dev/null 2>&1"
+  tg csh kill-server
+fi
 
 section "Floating"
 pane="$(tg main list-panes -t claude -F '#{pane_id}' | head -n 1)"
