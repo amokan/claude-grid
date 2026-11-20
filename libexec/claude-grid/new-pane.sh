@@ -21,12 +21,24 @@ START="${4:-}"
 # panes use it.
 DIRS=()
 COUNTS=()
+# Typed relative paths start here: the focused pane's folder, or the home folder if tmux can't
+# tell. FOCUSED says whether DIRS[0] is the focused pane's folder.
+BASE="$HOME"
+FOCUSED=false
 list_folders() {
   local path i
-  DIRS=("$(tmux display -p -t "$PANE" '#{pane_current_path}')")
-  COUNTS=(0)
+  DIRS=()
+  COUNTS=()
+  path="$(tmux display -p -t "$PANE" '#{pane_current_path}')"
+  if [ -n "$path" ]; then
+    DIRS=("$path")
+    COUNTS=(0)
+    BASE="$path"
+    FOCUSED=true
+  fi
   while IFS= read -r path; do
-    for i in "${!DIRS[@]}"; do
+    [ -n "$path" ] || continue
+    for i in ${DIRS[@]+"${!DIRS[@]}"}; do
       if [ "${DIRS[$i]}" = "$path" ]; then COUNTS[i]=$((COUNTS[i] + 1)); continue 2; fi
     done
     DIRS+=("$path")
@@ -47,7 +59,7 @@ show_path() {
 resolve_folder() {
   local path="$1"
   # shellcheck disable=SC2088 # matching a literal ~ on purpose
-  case "$path" in "~") path="$HOME" ;; "~/"*) path="$HOME/${path#"~/"}" ;; /*) ;; *) path="${DIRS[0]}/$path" ;; esac
+  case "$path" in "~") path="$HOME" ;; "~/"*) path="$HOME/${path#"~/"}" ;; /*) ;; *) path="$BASE/$path" ;; esac
   (cd "$path" 2>/dev/null && pwd)
 }
 
@@ -62,7 +74,7 @@ open_picker() {
   local width=56 i line
   use_utf8
   list_folders
-  for i in "${!DIRS[@]}"; do
+  for i in ${DIRS[@]+"${!DIRS[@]}"}; do
     line="$(basename "${DIRS[$i]}")  $(show_path "${DIRS[$i]}")  focused · 2 panes"
     [ $((${#line} + 12)) -le "$width" ] || width=$((${#line} + 12))
   done
@@ -72,7 +84,7 @@ open_picker() {
 # Whether a folder is the focused pane's, and how many panes use it.
 tag_of() {
   local tag=""
-  [ "$1" != 0 ] || tag="focused"
+  [ "$1" != 0 ] || ! $FOCUSED || tag="focused"
   [ "${COUNTS[$1]}" -le 1 ] || tag="${tag:+$tag · }${COUNTS[$1]} panes"
   printf '%s' "$tag"
 }
@@ -83,7 +95,7 @@ pad() { printf '%s%*s' "$1" $(($2 - ${#1})) ''; }
 # The list rows, in three columns: the folder's name, its path, and its tag.
 build_items() {
   local width="$1" i name tag names=0 tags=0 paths
-  for i in "${!DIRS[@]}"; do
+  for i in ${DIRS[@]+"${!DIRS[@]}"}; do
     name="$(basename "${DIRS[$i]}")"
     [ "${#name}" -le "$names" ] || names=${#name}
     tag="$(tag_of "$i")"
@@ -96,7 +108,7 @@ build_items() {
   [ "$paths" -ge 8 ] || paths=8
   ITEMS=()
   KEYS=()
-  for i in "${!DIRS[@]}"; do
+  for i in ${DIRS[@]+"${!DIRS[@]}"}; do
     name="$(fit "$(basename "${DIRS[$i]}")" "$names")"
     name="${name//[[:cntrl:]]/?}"
     tag="$(tag_of "$i")"
@@ -150,7 +162,7 @@ run_picker() {
   start_picker
   build_items "$(inner_width)"
   # Typed paths and Tab completion start from the focused pane's folder.
-  cd "${DIRS[0]}" 2>/dev/null || true
+  cd "$BASE" 2>/dev/null || true
   if [ "$START" = other ]; then
     ask_folder || exit 0
     start_in "$ANSWER"
